@@ -1,0 +1,175 @@
+#!/usr/bin/env python3
+"""
+ShrineProjector CLI Controller
+Instant management for screen capture daemon, stream power toggle, and Tailscale URL.
+"""
+
+import sys
+import json
+import urllib.request
+import urllib.error
+import subprocess
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parent.parent
+CONFIG_PATH = ROOT / "config" / "shrine-config.json"
+
+
+def load_config() -> dict:
+    try:
+        with open(CONFIG_PATH, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except (OSError, ValueError):
+        return {}
+
+
+CFG = load_config()
+DAEMON_PORT = int(CFG.get("server", {}).get("port", 8765))
+_tokens = CFG.get("security", {}).get("auth_tokens") or [{}]
+TOKEN = _tokens[0].get("token", "")
+BASE_URL = f"http://127.0.0.1:{DAEMON_PORT}"
+# public_url = alamat yang dibuka dari device lain (mis. URL `tailscale serve`). Kosong = localhost.
+_public = (CFG.get("server", {}).get("public_url") or BASE_URL).rstrip("/")
+PROJECTOR_URL = f"{_public}/?token={TOKEN}"
+
+
+def api_call(path: str, method: str = "GET") -> dict:
+    url = f"{BASE_URL}{path}?token={TOKEN}"
+    req = urllib.request.Request(url, method=method)
+    try:
+        with urllib.request.urlopen(req, timeout=2.0) as res:
+            return json.loads(res.read().decode())
+    except urllib.error.URLError:
+        return {"error": "Daemon unreachable. Is ShrineProjector running?"}
+
+
+def get_mem_cpu():
+    try:
+        # Check ffmpeg and python daemon
+        res = subprocess.run(
+            ["ps", "-A", "-o", "pid,rss,%cpu,command"],
+            capture_output=True,
+            text=True
+        )
+        total_rss_kb = 0
+        total_cpu = 0.0
+        ffmpeg_running = False
+        for line in res.stdout.strip().split("\n"):
+            if "server.app" in line or "shrine-projector" in line:
+                parts = line.split()
+                if len(parts) >= 4:
+                    total_rss_kb += int(parts[1])
+                    total_cpu += float(parts[2])
+            elif "avfoundation" in line and "ffmpeg" in line:
+                parts = line.split()
+                if len(parts) >= 4:
+                    ffmpeg_running = True
+                    total_rss_kb += int(parts[1])
+                    total_cpu += float(parts[2])
+        return {
+            "total_rss_mb": round(total_rss_kb / 1024, 1),
+            "total_cpu": round(total_cpu, 1),
+            "ffmpeg_active": ffmpeg_running
+        }
+    except Exception:
+        return {"total_rss_mb": 0, "total_cpu": 0.0, "ffmpeg_active": False}
+
+
+def cmd_status():
+    st = api_call("/api/status")
+    perf = get_mem_cpu()
+
+    print("\n\033[1m=== ShrineProjector Status ===\033[0m")
+    if "error" in st:
+        print(f"Status:   \033[31mOFFLINE\033[0m ({st['error']})")
+        print("To start: projector start\n")
+        return
+
+    active = st.get("stream_active", False)
+    if active:
+        state_str = "\033[32m● STREAMING (ACTIVE)\033[0m"
+    else:
+        state_str = "\033[33m⏸ STANDBY (0% RAM / 0% CPU)\033[0m"
+
+    print(f"Engine:    {state_str}")
+    print(f"Viewers:   {st.get('connected_viewers', 0)} connected")
+    print(f"Display:   {st.get('display', {}).get('width')}x{st.get('display', {}).get('height')} @ {st.get('display', {}).get('fps')} FPS")
+    print(f"Memory:    {perf['total_rss_mb']} MB RAM")
+    print(f"CPU Load:  {perf['total_cpu']}%")
+    print(f"Tailscale: {PROJECTOR_URL}\n")
+
+
+def cmd_on():
+    res = api_call("/api/stream/activate", method="POST")
+    if "error" in res:
+        print(f"[-] Error: {res['error']}")
+    else:
+        print("[+] ShrineProjector stream ACTIVATED. Display is live.")
+        print(f"    URL: {PROJECTOR_URL}")
+
+
+def cmd_off():
+    res = api_call("/api/stream/deactivate", method="POST")
+    if "error" in res:
+        print(f"[-] Error: {res['error']}")
+    else:
+        print("[+] ShrineProjector stream DEACTIVATED. FFmpeg killed (0% RAM/CPU).")
+
+
+def cmd_toggle():
+    res = api_call("/api/stream/toggle", method="POST")
+    if "error" in res:
+        print(f"[-] Error: {res['error']}")
+    else:
+        is_active = res.get("stream_active", False)
+        if is_active:
+            print("[+] Toggled: \033[32mACTIVE (Streaming)\033[0m")
+        else:
+            print("[+] Toggled: \033[33mSTANDBY (0% RAM/CPU)\033[0m")
+
+
+def cmd_open():
+    print(f"[+] Opening {PROJECTOR_URL} in browser...")
+    subprocess.run(["open", PROJECTOR_URL])
+
+
+def cmd_url():
+    print(PROJECTOR_URL)
+    try:
+        subprocess.run(["pbcopy"], input=PROJECTOR_URL.encode(), check=False)
+        print("(Copied to clipboard)")
+    except Exception:
+        pass
+
+
+def main():
+    if len(sys.argv) < 2 or sys.argv[1] in ("help", "-h", "--help"):
+        print("Usage: projector [status|on|off|toggle|open|url]")
+        print("  status : Check current stream state, viewers & RAM usage")
+        print("  on     : Activate stream (start FFmpeg capture)")
+        print("  off    : Deactivate stream (kill FFmpeg, drop to 0% RAM)")
+        print("  toggle : Switch between active and standby")
+        print("  open   : Open projector stream in browser")
+        print("  url    : Print and copy authenticated Tailscale URL")
+        return
+
+    sub = sys.argv[1].lower()
+    if sub in ("status", "st"):
+        cmd_status()
+    elif sub in ("on", "start", "activate"):
+        cmd_on()
+    elif sub in ("off", "stop", "deactivate"):
+        cmd_off()
+    elif sub in ("toggle", "tog"):
+        cmd_toggle()
+    elif sub in ("open", "ui"):
+        cmd_open()
+    elif sub in ("url", "link"):
+        cmd_url()
+    else:
+        print(f"Unknown command: {sub}")
+        print("Usage: projector [status|on|off|toggle|open|url]")
+
+
+if __name__ == "__main__":
+    main()

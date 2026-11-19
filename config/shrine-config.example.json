@@ -1,0 +1,40 @@
+{
+  "server": {
+    "bind_host": "127.0.0.1",
+    "port": 8765,
+    "public_url": ""
+  },
+  "security": {
+    "allow_interactive_mode": true,
+    "max_clipboard_chars": 65536,
+    "rate_limit_events_per_sec": 120,
+    "allowed_subnets": [
+      "127.0.0.0/8",
+      "100.64.0.0/10"
+    ],
+    "auth_tokens": [
+      {
+        "token": "REPLACE-ME-run-scripts-init-config",
+        "description": "Admin (view + control)",
+        "role": "admin",
+        "can_control": true
+      },
+      {
+        "token": "REPLACE-ME-run-scripts-init-config-viewer",
+        "description": "View-only guest",
+        "role": "viewer",
+        "can_control": false
+      }
+    ]
+  },
+  "capture": {
+    "start_on_boot": false,
+    "idle_timeout_seconds": 300
+  },
+  "display": {
+    "screen_index": 0,
+    "fps": 30,
+    "quality": 75,
+    "default_profile": "full"
+  }
+}

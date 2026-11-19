@@ -1,0 +1,1918 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+  <title>ShrineProjector // Zero-Trust Display</title>
+  <style>
+    :root {
+      --bg: #090a0f;
+      --card-bg: rgba(18, 20, 29, 0.85);
+      --border: rgba(255, 255, 255, 0.1);
+      --accent: #e8500a;
+      --accent-glow: rgba(232, 80, 10, 0.25);
+      --green: #10b981;
+      --green-glow: rgba(16, 185, 129, 0.2);
+      --amber: #f59e0b;
+      --red: #ef4444;
+      --blue: #3b82f6;
+      --text: #f3f4f6;
+      --text-muted: #9ca3af;
+    }
+
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+      user-select: none;
+      -webkit-user-select: none;
+    }
+
+    body, html {
+      width: 100%;
+      height: 100%;
+      overflow: hidden;
+      background-color: var(--bg);
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      color: var(--text);
+      touch-action: none;
+      -webkit-touch-callout: none;
+    }
+
+    #viewport {
+      position: absolute;
+      inset: 0;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      background: radial-gradient(circle at center, #151824 0%, #08090d 100%);
+      padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left);
+      touch-action: none;
+    }
+
+    canvas, #stream-fallback {
+      max-width: 100%;
+      max-height: 100%;
+      object-fit: contain;
+      box-shadow: 0 20px 50px rgba(0, 0, 0, 0.8);
+      border-radius: 4px;
+      cursor: default;
+      touch-action: none;
+    }
+
+    canvas.interactive {
+      cursor: crosshair;
+    }
+
+    /* Standby Overlay */
+    #standby-overlay {
+      position: absolute;
+      inset: 0;
+      display: none;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      background: rgba(9, 10, 15, 0.92);
+      backdrop-filter: blur(20px);
+      -webkit-backdrop-filter: blur(20px);
+      z-index: 50;
+    }
+
+    .standby-card {
+      background: #11131a;
+      border: 1px solid var(--border);
+      border-radius: 20px;
+      padding: 40px;
+      text-align: center;
+      max-width: 440px;
+      box-shadow: 0 30px 60px rgba(0, 0, 0, 0.8);
+    }
+
+    .standby-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      background: rgba(255, 255, 255, 0.06);
+      border: 1px solid var(--border);
+      padding: 4px 12px;
+      border-radius: 9999px;
+      font-family: ui-monospace, 'SF Mono', Menlo, monospace;
+      font-size: 11px;
+      color: var(--text-muted);
+      margin-bottom: 16px;
+    }
+
+    .standby-title {
+      font-size: 22px;
+      font-weight: 700;
+      margin-bottom: 8px;
+      letter-spacing: -0.02em;
+    }
+
+    .standby-desc {
+      font-size: 14px;
+      color: var(--text-muted);
+      line-height: 1.6;
+      margin-bottom: 28px;
+    }
+
+    .btn-activate {
+      background: #10b981;
+      color: #fff;
+      border: none;
+      padding: 14px 28px;
+      border-radius: 12px;
+      font-size: 15px;
+      font-weight: 600;
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      box-shadow: 0 0 20px rgba(16, 185, 129, 0.35);
+      transition: all 0.2s ease;
+    }
+
+    .btn-activate:hover {
+      background: #059669;
+      transform: translateY(-1px);
+    }
+
+    /* HUD Bar */
+    .hud {
+      position: absolute;
+      top: max(16px, env(safe-area-inset-top));
+      left: 16px;
+      right: 16px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      pointer-events: none;
+      z-index: 100;
+      flex-wrap: wrap;
+      gap: 8px;
+    }
+
+    .hud-group {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      pointer-events: auto;
+      flex-wrap: wrap;
+    }
+
+    .badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      padding: 6px 12px;
+      border-radius: 9999px;
+      background: var(--card-bg);
+      backdrop-filter: blur(12px);
+      -webkit-backdrop-filter: blur(12px);
+      border: 1px solid var(--border);
+      font-family: ui-monospace, 'SF Mono', Menlo, monospace;
+      font-size: 11px;
+      font-weight: 500;
+      letter-spacing: 0.04em;
+    }
+
+    .badge-dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+    }
+
+    .mode-projector .badge-dot {
+      background-color: var(--green);
+      box-shadow: 0 0 10px var(--green);
+    }
+
+    .mode-interactive .badge-dot {
+      background-color: var(--amber);
+      box-shadow: 0 0 10px var(--amber);
+    }
+
+    .mode-connecting .badge-dot {
+      background-color: #6366f1;
+      box-shadow: 0 0 10px #6366f1;
+    }
+
+    .mode-standby .badge-dot {
+      background-color: #6b7280;
+      box-shadow: 0 0 8px #6b7280;
+    }
+
+    .btn {
+      background: var(--card-bg);
+      border: 1px solid var(--border);
+      color: var(--text);
+      padding: 6px 12px;
+      border-radius: 8px;
+      font-size: 12px;
+      font-weight: 500;
+      cursor: pointer;
+      backdrop-filter: blur(12px);
+      -webkit-backdrop-filter: blur(12px);
+      transition: all 0.2s ease;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .btn:hover, .btn.active {
+      background: rgba(255, 255, 255, 0.2);
+      border-color: rgba(255, 255, 255, 0.35);
+    }
+
+    .btn-power-active {
+      background: rgba(239, 68, 68, 0.15);
+      border-color: rgba(239, 68, 68, 0.4);
+      color: #fca5a5;
+    }
+
+    .btn-power-active:hover {
+      background: rgba(239, 68, 68, 0.3);
+    }
+
+    .btn-power-standby {
+      background: rgba(16, 185, 129, 0.15);
+      border-color: rgba(16, 185, 129, 0.4);
+      color: #6ee7b7;
+    }
+
+    .btn-power-standby:hover {
+      background: rgba(16, 185, 129, 0.3);
+    }
+
+    /* Modal */
+    .modal-overlay {
+      position: fixed;
+      inset: 0;
+      background: rgba(0, 0, 0, 0.85);
+      backdrop-filter: blur(16px);
+      -webkit-backdrop-filter: blur(16px);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      z-index: 1000;
+    }
+
+    .modal-card {
+      background: #11131a;
+      border: 1px solid var(--border);
+      border-radius: 16px;
+      padding: 32px;
+      width: 90%;
+      max-width: 440px;
+      box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.7);
+    }
+
+    .modal-card h2 {
+      font-size: 20px;
+      font-weight: 700;
+      margin-bottom: 8px;
+      letter-spacing: -0.02em;
+    }
+
+    .modal-card p {
+      color: var(--text-muted);
+      font-size: 14px;
+      margin-bottom: 24px;
+      line-height: 1.5;
+    }
+
+    .input-field {
+      width: 100%;
+      background: #090a0f;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 12px 16px;
+      color: var(--text);
+      font-family: ui-monospace, 'SF Mono', Menlo, monospace;
+      font-size: 13px;
+      margin-bottom: 20px;
+      outline: none;
+    }
+
+    .input-field:focus {
+      border-color: var(--accent);
+      box-shadow: 0 0 0 2px var(--accent-glow);
+    }
+
+    .btn-primary {
+      width: 100%;
+      background: var(--accent);
+      color: white;
+      border: none;
+      padding: 12px;
+      border-radius: 8px;
+      font-weight: 600;
+      font-size: 14px;
+      cursor: pointer;
+      transition: background 0.2s;
+    }
+
+    .btn-primary:hover {
+      background: #d44505;
+    }
+
+    #stats-badge {
+      font-variant-numeric: tabular-nums;
+    }
+
+    .btn.active-amber {
+      background: var(--amber) !important;
+      color: #000 !important;
+      font-weight: 700 !important;
+      box-shadow: 0 0 14px rgba(245, 158, 11, 0.6) !important;
+      border-color: rgba(245, 158, 11, 0.9) !important;
+    }
+
+    /* Touch Visual Ripple Indicator */
+    .touch-ripple {
+      position: fixed;
+      width: 44px;
+      height: 44px;
+      margin-left: -22px;
+      margin-top: -22px;
+      border-radius: 50%;
+      pointer-events: none;
+      z-index: 9999;
+      transform: scale(0.2);
+      opacity: 0.95;
+      animation: ripple-anim 0.36s cubic-bezier(0.1, 0.8, 0.3, 1) forwards;
+    }
+
+    .ripple-left {
+      background: radial-gradient(circle, rgba(59, 130, 246, 0.8) 0%, rgba(59, 130, 246, 0.15) 70%, transparent 100%);
+      border: 2px solid rgba(59, 130, 246, 0.95);
+      box-shadow: 0 0 16px rgba(59, 130, 246, 0.7);
+    }
+
+    .ripple-right {
+      background: radial-gradient(circle, rgba(245, 158, 11, 0.85) 0%, rgba(245, 158, 11, 0.2) 70%, transparent 100%);
+      border: 2px solid rgba(245, 158, 11, 0.95);
+      box-shadow: 0 0 20px rgba(245, 158, 11, 0.8);
+    }
+
+    @keyframes ripple-anim {
+      0% {
+        transform: scale(0.2);
+        opacity: 0.95;
+      }
+      100% {
+        transform: scale(1.6);
+        opacity: 0;
+      }
+    }
+
+    /* Mobile & Compact Screen Responsive Optimization */
+    @media (max-width: 640px) {
+      .hud {
+        top: max(8px, env(safe-area-inset-top));
+        left: 8px;
+        right: 8px;
+        gap: 6px;
+      }
+      .hud-group {
+        gap: 4px;
+      }
+      .badge {
+        padding: 4px 8px;
+        font-size: 10px;
+      }
+      .btn {
+        padding: 5px 8px;
+        font-size: 11px;
+      }
+      #stats-badge {
+        display: none;
+      }
+    }
+
+    /* HUD auto-hide: HUD + bar bawah ngumpet, sisa pil kecil di pojok kanan bawah */
+    .hud, .termius-bar {
+      transition: opacity 0.22s ease, visibility 0.22s ease;
+    }
+    .hud.collapsed, .termius-bar.collapsed {
+      opacity: 0;
+      visibility: hidden;
+      pointer-events: none !important;
+    }
+    #hud-pill {
+      position: fixed;
+      right: max(10px, env(safe-area-inset-right));
+      bottom: max(10px, env(safe-area-inset-bottom));
+      z-index: 600;
+      display: none;
+      align-items: center;
+      gap: 6px;
+      padding: 6px 10px;
+      border-radius: 9999px;
+      background: rgba(14, 16, 24, 0.72);
+      border: 1px solid rgba(255, 255, 255, 0.18);
+      backdrop-filter: blur(12px);
+      -webkit-backdrop-filter: blur(12px);
+      color: #e2e8f0;
+      font-family: ui-monospace, 'SF Mono', Menlo, monospace;
+      font-size: 12px;
+      cursor: pointer;
+      opacity: 0.55;
+      touch-action: manipulation;
+      -webkit-tap-highlight-color: transparent;
+    }
+    #hud-pill.show { display: inline-flex; }
+    #hud-pill:active { opacity: 1; }
+    #hud-pill .pill-dot {
+      width: 8px; height: 8px; border-radius: 50%;
+      background: var(--green); box-shadow: 0 0 8px var(--green);
+    }
+
+    /* Sleek Termius-Style Mobile Keyboard Accessory Bar */
+    .termius-bar {
+      position: fixed;
+      bottom: max(6px, env(safe-area-inset-bottom));
+      left: 50%;
+      transform: translateX(-50%);
+      width: calc(100% - 16px);
+      max-width: 540px;
+      height: 38px;
+      background: rgba(14, 16, 24, 0.92);
+      border: 1px solid rgba(255, 255, 255, 0.14);
+      backdrop-filter: blur(24px);
+      -webkit-backdrop-filter: blur(24px);
+      border-radius: 10px;
+      padding: 0 4px;
+      display: flex;
+      align-items: center;
+      gap: 4px;
+      box-shadow: 0 8px 32px rgba(0, 0, 0, 0.75), 0 1px 0 rgba(255, 255, 255, 0.08) inset;
+      z-index: 500;
+      user-select: none;
+      -webkit-user-select: none;
+      overflow-x: auto;
+      scrollbar-width: none;
+      -webkit-overflow-scrolling: touch;
+      touch-action: pan-x;
+    }
+    .termius-bar::-webkit-scrollbar {
+      display: none;
+    }
+
+    .t-btn {
+      flex: 1 0 auto;
+      height: 28px;
+      min-width: 28px;
+      padding: 0 7px;
+      background: rgba(255, 255, 255, 0.07);
+      border: 1px solid rgba(255, 255, 255, 0.12);
+      border-radius: 6px;
+      color: #e2e8f0;
+      font-family: ui-monospace, 'SF Mono', Menlo, monospace;
+      font-size: 11px;
+      font-weight: 600;
+      letter-spacing: 0.02em;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      cursor: pointer;
+      touch-action: manipulation;
+      transition: background 0.12s ease, transform 0.08s ease, border-color 0.12s ease;
+      white-space: nowrap;
+    }
+
+    .t-btn:active {
+      transform: scale(0.94);
+      background: rgba(255, 255, 255, 0.22);
+    }
+
+    /* Sticky modifier active amber state (Termius style) */
+    .t-btn.latched {
+      background: var(--accent) !important;
+      border-color: #ffd074 !important;
+      color: #0b0c10 !important;
+      font-weight: 700;
+      box-shadow: 0 0 12px var(--accent-glow), 0 0 4px rgba(245, 166, 35, 0.8);
+      animation: latch-pulse 1.6s infinite ease-in-out;
+    }
+
+    @keyframes latch-pulse {
+      0%, 100% { box-shadow: 0 0 8px var(--accent-glow); }
+      50% { box-shadow: 0 0 16px rgba(245, 166, 35, 0.85); }
+    }
+
+    .t-btn.active {
+      background: rgba(255, 255, 255, 0.25);
+      border-color: rgba(255, 255, 255, 0.4);
+    }
+
+    .t-arrow {
+      font-size: 13px;
+      min-width: 26px;
+      padding: 0 5px;
+    }
+
+    .t-divider {
+      width: 1px;
+      height: 18px;
+      background: rgba(255, 255, 255, 0.15);
+      margin: 0 1px;
+      flex-shrink: 0;
+    }
+
+    .t-btn#t-kb, .t-kb-btn {
+      position: relative;
+      cursor: pointer;
+      overflow: hidden;
+      -webkit-user-select: none;
+      user-select: none;
+      -webkit-tap-highlight-color: transparent;
+      background: rgba(245, 166, 35, 0.15) !important;
+      border-color: rgba(245, 166, 35, 0.35) !important;
+      font-size: 14px;
+      min-width: 34px;
+      padding: 0 8px;
+    }
+
+    .t-btn#t-kb.active, .t-kb-btn.active, .btn#btn-hud-keyboard.active {
+      background: var(--accent) !important;
+      border-color: #ffd074 !important;
+      color: #0b0c10 !important;
+      font-weight: 700 !important;
+      box-shadow: 0 0 12px var(--accent-glow) !important;
+    }
+
+    .t-kb-icon {
+      pointer-events: none;
+    }
+
+    .termius-hidden-input {
+      position: fixed;
+      bottom: 48px;
+      left: 50%;
+      transform: translateX(-50%);
+      width: 240px;
+      height: 34px;
+      opacity: 0.001;
+      font-size: 16px; /* Prevents iOS auto-zoom on focus */
+      border: none;
+      outline: none;
+      background: transparent;
+      color: transparent;
+      caret-color: transparent;
+      cursor: pointer;
+      -webkit-tap-highlight-color: transparent;
+      pointer-events: auto;
+      z-index: 10;
+    }
+  </style>
+</head>
+<body>
+
+  <div id="viewport">
+    <canvas id="screen-canvas" width="1920" height="1080" tabindex="0"></canvas>
+    <img id="stream-fallback" style="display: none;" alt="Live Display Stream">
+
+    <!-- Standby / Inactive Overlay -->
+    <div id="standby-overlay">
+      <div class="standby-card">
+        <div class="standby-badge">
+          <span>●</span> STANDBY MODE (0% RAM / 0% CPU)
+        </div>
+        <h2 class="standby-title">Capture Deactivated</h2>
+        <p class="standby-desc">FFmpeg is terminated. Mac Mini memory and processor are completely resting.</p>
+        <button class="btn-activate" id="btn-activate-overlay">
+          <span>▶</span> ACTIVATE STREAM
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Sleek Termius-Style Mobile Keyboard Accessory Bar -->
+  <div id="termius-bar" class="termius-bar" role="toolbar" aria-label="Termius Quick Controls">
+    <label class="t-btn t-kb-btn" id="t-kb" for="termius-hidden-input" title="Toggle On-Screen Keyboard">
+      <span class="t-kb-icon">⌨️</span>
+    </label>
+    <button class="t-btn" id="t-esc" data-key="Escape">ESC</button>
+    <button class="t-btn" id="t-tab" data-key="Tab">TAB</button>
+    <button class="t-btn t-modifier" id="t-ctrl" data-mod="Control">CTRL</button>
+    <button class="t-btn t-modifier" id="t-cmd" data-mod="Command">CMD</button>
+    <button class="t-btn t-modifier" id="t-shift" data-mod="Shift">SHIFT</button>
+    <button class="t-btn" id="t-paste" title="Paste to Mac Mini">PASTE</button>
+    <span class="t-divider"></span>
+    <button class="t-btn t-arrow" data-key="ArrowLeft" title="Left">←</button>
+    <button class="t-btn t-arrow" data-key="ArrowUp" title="Up">↑</button>
+    <button class="t-btn t-arrow" data-key="ArrowDown" title="Down">↓</button>
+    <button class="t-btn t-arrow" data-key="ArrowRight" title="Right">→</button>
+  </div>
+
+  <!-- Hidden input to summon & capture native iOS on-screen keyboard -->
+  <input id="termius-hidden-input" type="text" class="termius-hidden-input" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" inputmode="text" enterkeyhint="go">
+
+  <div class="hud">
+    <div class="hud-group">
+      <div class="badge" id="brand-badge">
+        <span style="color: var(--accent); font-weight: 700;">SHRINE</span>PROJECTOR
+      </div>
+      <div class="badge mode-connecting" id="mode-badge">
+        <span class="badge-dot"></span>
+        <span id="mode-text">CONNECTING...</span>
+      </div>
+      <!-- Power Toggle Button -->
+      <button class="btn btn-power-active" id="btn-power" title="Toggle Screen Capture On/Off">
+        <span>⚡</span> Deactivate
+      </button>
+    </div>
+
+    <div class="hud-group">
+      <div class="badge" id="stats-badge">
+        <span id="fps-counter">0 FPS</span> &bull; <span id="ping-counter">-- ms</span>
+      </div>
+      <button class="btn" id="btn-mouse-mode" title="Toggle Left / Right click mode for next tap">
+        <span id="mouse-mode-icon">🖱️</span> <span id="mouse-mode-text">L-Click</span>
+      </button>
+      <button class="btn" id="btn-kafe" title="Mode Kafe: 1280px, 12 FPS, hemat bandwidth (~7 Mbps)">
+        <span>☕</span> <span id="kafe-text">Kafe</span>
+      </button>
+      <button class="btn" id="btn-audio" title="Toggle Live System Audio">
+        <span id="audio-icon">🔈</span> <span id="audio-text">Audio</span>
+      </button>
+      <button class="btn" id="btn-mackeys" title="Ctrl di keyboard iPad dikirim sebagai Cmd ke Mac (iPadOS nelen Cmd+huruf)">
+        <span>⌘</span> <span id="mackeys-text">Ctrl→Cmd</span>
+      </button>
+      <button class="btn mac-shortcut" data-combo="Command+ " title="Spotlight (Cmd+Space)">🔍 Spotlight</button>
+      <button class="btn mac-shortcut" data-combo="Command+Tab" title="Pindah app (Cmd+Tab)">⇥ App</button>
+      <button class="btn mac-shortcut" data-combo="Command+q" title="Tutup app (Cmd+Q)">✕ Quit</button>
+      <label class="btn" id="btn-hud-keyboard" for="termius-hidden-input" title="Toggle On-Screen Keyboard">
+        <span>⌨️</span> <span>Keybd</span>
+      </label>
+      <button class="btn" id="btn-lock" title="Lock cursor inside desktop">
+        <span>🔒</span> Lock Cursor
+      </button>
+      <button class="btn" id="btn-fullscreen">
+        <span>⛶</span> Fullscreen
+      </button>
+    </div>
+  </div>
+
+  <!-- Pil kecil buat munculin HUD lagi -->
+  <button id="hud-pill" title="Tampilkan kontrol"><span class="pill-dot"></span><span>⋯</span></button>
+
+  <div class="modal-overlay" id="auth-modal" style="display: none;">
+    <div class="modal-card">
+      <h2>ShrineProjector Gate</h2>
+      <p>Enter your private bearer token to establish zero-trust screen streaming.</p>
+      <input type="password" id="token-input" class="input-field" placeholder="shrine-proj-..." autofocus>
+      <button class="btn-primary" id="btn-connect">Connect to Host</button>
+    </div>
+  </div>
+
+  <script>
+    const canvas = document.getElementById('screen-canvas');
+    const ctx = canvas.getContext('2d');
+    const streamFallback = document.getElementById('stream-fallback');
+    const standbyOverlay = document.getElementById('standby-overlay');
+    const btnActivateOverlay = document.getElementById('btn-activate-overlay');
+    const btnPower = document.getElementById('btn-power');
+    const modeBadge = document.getElementById('mode-badge');
+    const modeText = document.getElementById('mode-text');
+    const fpsCounter = document.getElementById('fps-counter');
+    const pingCounter = document.getElementById('ping-counter');
+    const authModal = document.getElementById('auth-modal');
+    const tokenInput = document.getElementById('token-input');
+    const btnConnect = document.getElementById('btn-connect');
+    const btnFullscreen = document.getElementById('btn-fullscreen');
+    const btnLock = document.getElementById('btn-lock');
+    const btnMouseMode = document.getElementById('btn-mouse-mode');
+    const mouseModeText = document.getElementById('mouse-mode-text');
+    const termiusBar = document.getElementById('termius-bar');
+    const termiusInput = document.getElementById('termius-hidden-input');
+    const btnPaste = document.getElementById('t-paste');
+    const btnKb = document.getElementById('t-kb');
+    const btnHudKeyboard = document.getElementById('btn-hud-keyboard');
+
+    let ws = null;
+    let urlToken = null;
+    try {
+      urlToken = new URLSearchParams(window.location.search).get('token');
+    } catch (e) {}
+
+    let storedToken = null;
+    try {
+      storedToken = localStorage.getItem('shrine_projector_token');
+    } catch (e) {}
+
+    // Tidak ada token bawaan: tanpa token, client wajib minta lewat modal.
+    // Token baru disimpan SETELAH server menerimanya (lihat init), jadi token basi
+    // dari bookmark/link lama gak menimpa token bagus yang sudah tersimpan.
+    let token = urlToken || storedToken || null;
+
+    let canControl = false;
+    let isStreamActive = true;
+    let hostWidth = 1920;
+    let hostHeight = 1080;
+    let armedRightClick = false;
+
+    function setArmedRightClick(armed) {
+      armedRightClick = armed;
+      if (btnMouseMode) {
+        btnMouseMode.classList.toggle('active-amber', armed);
+        if (mouseModeText) mouseModeText.textContent = armed ? 'R-Click' : 'L-Click';
+      }
+    }
+
+    if (btnMouseMode) {
+      btnMouseMode.addEventListener('click', (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        setArmedRightClick(!armedRightClick);
+      });
+    }
+
+    // --- Ultra-Low Latency Live Audio (Native Web Audio API Buffer Scheduling) ---
+    const btnAudio = document.getElementById('btn-audio');
+    const audioIcon = document.getElementById('audio-icon');
+    const audioText = document.getElementById('audio-text');
+    let audioCtx = null;
+    let audioWs = null;
+    let isAudioPlaying = false;
+    let nextAudioTime = 0;
+
+    function unlockIosAudioSession() {
+      // Force navigator.audioSession to 'playback' for unmuted playback on iOS
+      if ('audioSession' in navigator) {
+        try { navigator.audioSession.type = 'playback'; } catch (e) {}
+      }
+    }
+
+    async function startAudio() {
+      try {
+        unlockIosAudioSession();
+
+        if (!audioCtx) {
+          audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+        }
+        if (audioCtx.state === 'suspended') {
+          await audioCtx.resume();
+        }
+
+        nextAudioTime = 0;
+
+        const loc = window.location;
+        const wsProto = loc.protocol === 'https:' ? 'wss:' : 'ws:';
+        const wsAudioUrl = `${wsProto}//${loc.host}/ws/audio?token=${encodeURIComponent(token)}`;
+
+        audioWs = new WebSocket(wsAudioUrl);
+        audioWs.binaryType = 'arraybuffer';
+
+        audioWs.onopen = () => {
+          isAudioPlaying = true;
+          if (btnAudio) {
+            btnAudio.classList.add('active-amber');
+            if (audioIcon) audioIcon.textContent = '🔊';
+            if (audioText) audioText.textContent = 'Audio LIVE';
+          }
+        };
+
+        audioWs.onmessage = (e) => {
+          if (!audioCtx || audioCtx.state !== 'running') return;
+          const arrayBuffer = e.data;
+          if (!(arrayBuffer instanceof ArrayBuffer)) return;
+
+          // 16-bit signed stereo PCM (interleaved L, R, L, R) at native 44.1kHz
+          const int16 = new Int16Array(arrayBuffer);
+          const numFrames = Math.floor(int16.length / 2);
+          if (numFrames <= 0) return;
+
+          // Native Web Audio automatically handles hardware sample rate conversion
+          const audioBuffer = audioCtx.createBuffer(2, numFrames, 44100);
+          const leftChannel = audioBuffer.getChannelData(0);
+          const rightChannel = audioBuffer.getChannelData(1);
+
+          for (let i = 0; i < numFrames; i++) {
+            leftChannel[i] = int16[i * 2] / 32768.0;
+            rightChannel[i] = int16[i * 2 + 1] / 32768.0;
+          }
+
+          const source = audioCtx.createBufferSource();
+          source.buffer = audioBuffer;
+          source.connect(audioCtx.destination);
+
+          const currentTime = audioCtx.currentTime;
+          const TARGET_BUFFER = 0.220; // 220ms target safety cushion (~5.5 chunks)
+          const MAX_BUFFER = 0.500;    // 500ms max latency cap
+
+          if (nextAudioTime === 0 || nextAudioTime < currentTime) {
+            // First packet OR network underrun: re-arm full 220ms safety cushion!
+            nextAudioTime = currentTime + TARGET_BUFFER;
+          } else if (nextAudioTime > currentTime + MAX_BUFFER) {
+            // Background tab / extreme drift clamp: snap back to target
+            nextAudioTime = currentTime + TARGET_BUFFER;
+          }
+
+          const bufferAhead = nextAudioTime - currentTime;
+
+          // Adaptive playback rate: smoothly absorbs network jitter and clock drift
+          // 2.5% variation is completely imperceptible to human ear
+          if (bufferAhead < 0.150) {
+            // Buffer thin (<150ms): slow down by 2.5% to let reservoir rebuild
+            source.playbackRate.value = 0.975;
+          } else if (bufferAhead > 0.300) {
+            // Buffer thick (>300ms): speed up by 2.5% to drain back to real-time
+            source.playbackRate.value = 1.025;
+          } else {
+            source.playbackRate.value = 1.000;
+          }
+
+          source.start(nextAudioTime);
+          nextAudioTime += (audioBuffer.duration / source.playbackRate.value);
+        };
+
+        audioWs.onerror = (err) => {
+          console.warn('Audio WebSocket error:', err);
+        };
+
+        audioWs.onclose = () => {
+          stopAudio();
+        };
+
+      } catch (err) {
+        console.warn('Failed to start Web Audio:', err);
+        stopAudio();
+      }
+    }
+
+    function stopAudio() {
+      if (audioWs) {
+        try { audioWs.close(); } catch (e) {}
+        audioWs = null;
+      }
+      if (audioCtx && audioCtx.state === 'running') {
+        try { audioCtx.suspend(); } catch (e) {}
+      }
+      isAudioPlaying = false;
+      nextAudioTime = 0;
+      if (btnAudio) {
+        btnAudio.classList.remove('active-amber');
+        if (audioIcon) audioIcon.textContent = '🔈';
+        if (audioText) audioText.textContent = 'Audio';
+      }
+    }
+
+    function toggleAudio() {
+      if (isAudioPlaying) {
+        stopAudio();
+      } else {
+        startAudio();
+      }
+    }
+
+    if (btnAudio) {
+      btnAudio.addEventListener('click', (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        toggleAudio();
+      });
+    }
+
+    function showTouchRipple(clientX, clientY, isRight) {
+      try {
+        const ripple = document.createElement('div');
+        ripple.className = 'touch-ripple' + (isRight ? ' ripple-right' : ' ripple-left');
+        ripple.style.left = `${clientX}px`;
+        ripple.style.top = `${clientY}px`;
+        document.body.appendChild(ripple);
+        setTimeout(() => ripple.remove(), 360);
+      } catch (e) {}
+    }
+
+    let frameCount = 0;
+    let lastFpsUpdate = performance.now();
+    let lastPingSend = 0;
+    let pingInterval = null;
+    let isFallbackActive = false;
+
+    // iPad pointer lock state
+    let isPointerLocked = false;
+    let virtualCursorX = 960;
+    let virtualCursorY = 540;
+
+    // Reusable image object for Safari blob rendering fallback
+    const frameImg = new Image();
+    let currentObjectUrl = null;
+    frameImg.onload = () => {
+      ctx.drawImage(frameImg, 0, 0, canvas.width, canvas.height);
+      if (currentObjectUrl) {
+        URL.revokeObjectURL(currentObjectUrl);
+        currentObjectUrl = null;
+      }
+      onFrameRendered();
+    };
+
+    function forgetToken() {
+      token = null;
+      try { localStorage.removeItem('shrine_projector_token'); } catch (e) {}
+      try {
+        const u = new URL(window.location);
+        u.searchParams.delete('token');
+        window.history.replaceState({}, '', u);
+      } catch (e) {}
+    }
+
+    async function init() {
+      if (!token) {
+        authModal.style.display = 'flex';
+        return;
+      }
+      try {
+        const res = await fetch(`/api/status?token=${encodeURIComponent(token)}`);
+        if (res.ok) {
+          const data = await res.json();
+          canControl = !!data.can_control;
+          try { localStorage.setItem('shrine_projector_token', token); } catch (e) {}
+          if (data.display) {
+            hostWidth = data.display.width || hostWidth;
+            hostHeight = data.display.height || hostHeight;
+            canvas.width = hostWidth;
+            canvas.height = hostHeight;
+          }
+          if (data.stream_active !== undefined) {
+            updateStreamStateUI(data.stream_active);
+          }
+          if (data.profile && typeof updateProfileUI === 'function') {
+            updateProfileUI(data.profile);
+          }
+          authModal.style.display = 'none';
+        } else if (res.status === 401) {
+          // Token di URL basi tapi ada token tersimpan yang beda: coba yang tersimpan dulu.
+          if (urlToken && token === urlToken && storedToken && storedToken !== urlToken) {
+            urlToken = null;
+            token = storedToken;
+            try {
+              const u = new URL(window.location);
+              u.searchParams.delete('token');
+              window.history.replaceState({}, '', u);
+            } catch (e) {}
+            return init();
+          }
+          forgetToken();
+          authModal.style.display = 'flex';
+          return;
+        }
+      } catch (e) {
+        console.warn('[ShrineProjector] Initial status check failed:', e);
+      }
+      connectWebSocket();
+    }
+
+    btnConnect.addEventListener('click', () => {
+      const enteredToken = tokenInput.value.trim();
+      if (enteredToken) {
+        token = enteredToken;
+        try { localStorage.setItem('shrine_projector_token', token); } catch (e) {}
+        const newUrl = new URL(window.location);
+        newUrl.searchParams.set('token', token);
+        window.history.replaceState({}, '', newUrl);
+        authModal.style.display = 'none';
+        connectWebSocket();
+      }
+    });
+
+    btnFullscreen.addEventListener('click', () => {
+      const el = document.documentElement;
+      if (!document.fullscreenElement && !document.webkitFullscreenElement) {
+        if (el.requestFullscreen) {
+          el.requestFullscreen();
+        } else if (el.webkitRequestFullscreen) {
+          el.webkitRequestFullscreen();
+        }
+      } else {
+        if (document.exitFullscreen) {
+          document.exitFullscreen();
+        } else if (document.webkitExitFullscreen) {
+          document.webkitExitFullscreen();
+        }
+      }
+    });
+
+    // --- Termius-Style Sticky Modifiers & Mobile Accessory Bar ---
+    const latchedModifiers = {
+      Control: false,
+      Command: false,
+      Shift: false
+    };
+
+    function toggleModifier(modName) {
+      const isLatched = !latchedModifiers[modName];
+      latchedModifiers[modName] = isLatched;
+      const btn = document.querySelector(`.t-modifier[data-mod="${modName}"]`);
+      if (btn) btn.classList.toggle('latched', isLatched);
+      if (navigator.vibrate) navigator.vibrate(20);
+
+      // Post modifier key event to host
+      sendInputEvent('key_event', {
+        key: modName,
+        action: isLatched ? 'down' : 'up'
+      });
+    }
+
+    function getActiveModifiers() {
+      return Object.keys(latchedModifiers).filter(k => latchedModifiers[k]);
+    }
+
+    function releaseLatchedModifiers() {
+      const active = getActiveModifiers();
+      if (active.length === 0) return;
+      for (const mod of active) {
+        latchedModifiers[mod] = false;
+        const btn = document.querySelector(`.t-modifier[data-mod="${mod}"]`);
+        if (btn) btn.classList.remove('latched');
+        sendInputEvent('key_event', { key: mod, action: 'up' });
+      }
+    }
+
+    // Modifier buttons click listeners (CTRL, CMD, SHIFT)
+    document.querySelectorAll('.t-modifier').forEach(btn => {
+      btn.addEventListener('click', (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        toggleModifier(btn.dataset.mod);
+      });
+    });
+
+    // Special key buttons (ESC, TAB, Arrows)
+    document.querySelectorAll('.t-btn[data-key]').forEach(btn => {
+      btn.addEventListener('click', (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        if (navigator.vibrate) navigator.vibrate(15);
+        const key = btn.dataset.key;
+        const mods = getActiveModifiers();
+        sendInputEvent('key_event', {
+          key: key,
+          action: 'click',
+          modifiers: mods
+        });
+        releaseLatchedModifiers();
+      });
+    });
+
+    // Dedicated Paste Button
+    if (btnPaste) {
+      btnPaste.addEventListener('click', async (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        if (navigator.vibrate) navigator.vibrate(20);
+        let text = '';
+        try {
+          if (navigator.clipboard && navigator.clipboard.readText) {
+            text = await navigator.clipboard.readText();
+          }
+        } catch (err) {
+          console.warn('Clipboard read error:', err);
+        }
+        if (!text) {
+          text = prompt('Paste text to send to Mac Mini:');
+        }
+        if (text) {
+          sendInputEvent('clipboard_paste', { text: text });
+        }
+        releaseLatchedModifiers();
+      });
+    }
+
+    // Crucial for iOS: prevent accessory bar buttons from blurring termiusInput when tapped
+    document.querySelectorAll('.termius-bar .t-btn:not(#t-kb)').forEach(btn => {
+      btn.addEventListener('pointerdown', (e) => {
+        if (document.activeElement === termiusInput) {
+          e.preventDefault();
+        }
+      });
+    });
+
+    // Keyboard Summon/Dismiss Toggle (both top HUD and bottom accessory bar)
+    function syncKeyboardUI(active) {
+      if (btnHudKeyboard) btnHudKeyboard.classList.toggle('active', active);
+      if (btnKb) btnKb.classList.toggle('active', active);
+    }
+
+    function toggleSoftwareKeyboard(e) {
+      if (!termiusInput) return;
+      if (document.activeElement === termiusInput) {
+        if (e) e.preventDefault();
+        termiusInput.blur();
+        syncKeyboardUI(false);
+      } else {
+        termiusInput.focus();
+        syncKeyboardUI(true);
+      }
+    }
+
+    if (btnHudKeyboard) {
+      btnHudKeyboard.addEventListener('click', toggleSoftwareKeyboard);
+    }
+    if (btnKb) {
+      btnKb.addEventListener('click', toggleSoftwareKeyboard);
+    }
+
+    if (termiusInput) {
+      termiusInput.addEventListener('focus', () => {
+        syncKeyboardUI(true);
+      });
+
+      termiusInput.addEventListener('blur', () => {
+        syncKeyboardUI(false);
+      });
+    }
+
+    // Input handlers on hidden input for native iOS virtual keyboard
+    let lastHandledKey = '';
+    let lastHandledTime = 0;
+
+    function dispatchVirtualKey(key, action = 'click') {
+      const now = performance.now();
+      if (key === lastHandledKey && (now - lastHandledTime) < 45) {
+        return; // Suppress duplicate keydown+beforeinput in iOS WebKit
+      }
+      lastHandledKey = key;
+      lastHandledTime = now;
+      const mods = getActiveModifiers();
+      sendInputEvent('key_event', { key: key, action: action, modifiers: mods });
+      releaseLatchedModifiers();
+    }
+
+    if (termiusInput) {
+      termiusInput.addEventListener('keydown', (e) => {
+        if (!canControl || !isStreamActive) return;
+        if (e.key === 'Unidentified') return;
+        // Keyboard fisik nyambung ke input ini juga: modifier & combo lewat jalur hardware
+        if (MOD_KEY_NAMES.has(e.key) || e.ctrlKey || e.metaKey || e.altKey) {
+          handleHardwareKey(e, 'down');
+          termiusInput.value = '';
+          return;
+        }
+        e.preventDefault();
+        let targetKey = e.key;
+        if (e.key === 'Enter') targetKey = 'Return';
+        dispatchVirtualKey(targetKey, 'click');
+        termiusInput.value = '';
+      });
+
+      termiusInput.addEventListener('beforeinput', (e) => {
+        if (!canControl || !isStreamActive) return;
+        if (e.inputType === 'insertText' && e.data) {
+          e.preventDefault();
+          for (const ch of e.data) {
+            dispatchVirtualKey(ch, 'click');
+          }
+          termiusInput.value = '';
+        } else if (e.inputType === 'deleteContentBackward') {
+          e.preventDefault();
+          dispatchVirtualKey('Backspace', 'click');
+          termiusInput.value = '';
+        }
+      });
+    }
+
+    // Dynamic viewport tracking: keeps accessory bar docked above iOS keyboard
+    if (window.visualViewport && termiusBar) {
+      const adjustBarPosition = () => {
+        const vv = window.visualViewport;
+        const offset = Math.max(0, window.innerHeight - (vv.offsetTop + vv.height));
+        termiusBar.style.bottom = `${offset + 6}px`;
+      };
+      window.visualViewport.addEventListener('resize', adjustBarPosition);
+      window.visualViewport.addEventListener('scroll', adjustBarPosition);
+    }
+
+    btnLock.addEventListener('click', () => {
+      if (canvas.requestPointerLock) {
+        canvas.requestPointerLock();
+      }
+    });
+
+    document.addEventListener('pointerlockchange', () => {
+      isPointerLocked = (document.pointerLockElement === canvas);
+      btnLock.classList.toggle('active', isPointerLocked);
+      btnLock.innerHTML = isPointerLocked ? '<span>🔓</span> Unlock' : '<span>🔒</span> Lock Cursor';
+    });
+
+    // Stream Power Controls (Idempotent & Debounced)
+    let isTogglingPower = false;
+    async function setStreamPower(targetActive) {
+      if (isTogglingPower) return;
+      isTogglingPower = true;
+
+      // 1. Optimistic UI update
+      updateStreamStateUI(targetActive);
+
+      // 2. Guaranteed Idempotent REST API Call
+      const endpoint = targetActive ? '/api/stream/activate' : '/api/stream/deactivate';
+      try {
+        await fetch(`${endpoint}?token=${encodeURIComponent(token)}`, { method: 'POST' });
+      } catch (e) {
+        console.error('Failed to change stream power:', e);
+      } finally {
+        setTimeout(() => { isTogglingPower = false; }, 350);
+      }
+
+      // 3. Notify WebSocket if open (with explicit action, avoiding toggle race conditions)
+      if (ws && ws.readyState === WebSocket.OPEN) {
+        try {
+          ws.send(JSON.stringify({ 
+            type: 'stream_power',
+            action: targetActive ? 'activate' : 'deactivate'
+          }));
+        } catch (e) {}
+      }
+    }
+
+    // Mode Kafe: ganti profil kualitas stream (full <-> kafe)
+    const btnKafe = document.getElementById('btn-kafe');
+    const kafeText = document.getElementById('kafe-text');
+    let streamProfile = 'full';
+    let isSwitchingProfile = false;
+
+    function updateProfileUI(profile) {
+      if (!profile) return;
+      streamProfile = profile;
+      if (!btnKafe) return;
+      if (profile === 'kafe') {
+        btnKafe.classList.add('active-amber');
+        kafeText.textContent = 'Kafe ON';
+      } else {
+        btnKafe.classList.remove('active-amber');
+        kafeText.textContent = 'Kafe';
+      }
+    }
+
+    async function setStreamProfile(profile) {
+      if (isSwitchingProfile) return;
+      isSwitchingProfile = true;
+      updateProfileUI(profile);
+      try {
+        const res = await fetch(`/api/stream/profile?mode=${encodeURIComponent(profile)}&token=${encodeURIComponent(token)}`, { method: 'POST' });
+        if (res.ok) {
+          const data = await res.json();
+          updateProfileUI(data.profile);
+        }
+      } catch (e) {
+        console.error('Failed to change stream profile:', e);
+      } finally {
+        setTimeout(() => { isSwitchingProfile = false; }, 500);
+      }
+    }
+
+    if (btnKafe) {
+      btnKafe.addEventListener('click', (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        setStreamProfile(streamProfile === 'kafe' ? 'full' : 'kafe');
+      });
+    }
+
+    btnPower.addEventListener('click', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      setStreamPower(!isStreamActive);
+    });
+
+    btnActivateOverlay.addEventListener('click', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      setStreamPower(true);
+    });
+
+    function updateStreamStateUI(active) {
+      isStreamActive = active;
+      if (active) {
+        standbyOverlay.style.display = 'none';
+        btnPower.className = 'btn btn-power-active';
+        btnPower.innerHTML = '<span>⚡</span> Deactivate';
+        modeBadge.className = canControl ? 'badge mode-interactive' : 'badge mode-projector';
+        modeText.textContent = canControl ? 'INTERACTIVE // ACTIVE' : 'PROJECTOR // ACTIVE';
+      } else {
+        standbyOverlay.style.display = 'flex';
+        btnPower.className = 'btn btn-power-standby';
+        btnPower.innerHTML = '<span>▶</span> Activate';
+        modeBadge.className = 'badge mode-standby';
+        modeText.textContent = 'STANDBY // 0% RAM';
+        fpsCounter.textContent = '0 FPS';
+        if (isAudioPlaying) {
+          toggleAudio();
+        }
+      }
+    }
+
+    function connectWebSocket() {
+      const loc = window.location;
+      const wsProtocol = loc.protocol === 'https:' ? 'wss:' : 'ws:';
+      const wsUrl = `${wsProtocol}//${loc.host}/ws/stream?token=${encodeURIComponent(token)}`;
+
+      modeBadge.className = 'badge mode-connecting';
+      modeText.textContent = 'CONNECTING...';
+
+      try {
+        ws = new WebSocket(wsUrl);
+        ws.binaryType = 'blob';
+      } catch (err) {
+        console.error('WebSocket creation error:', err);
+        activateHttpFallback();
+        return;
+      }
+
+      ws.onopen = () => {
+        console.log('[ShrineProjector] Connected to host daemon via WebSocket.');
+        if (pingInterval) clearInterval(pingInterval);
+        pingInterval = setInterval(sendPing, 2000);
+      };
+
+      ws.onmessage = async (event) => {
+        if (typeof event.data === 'string') {
+          handleJsonMessage(JSON.parse(event.data));
+        } else if (event.data instanceof Blob) {
+          handleBinaryFrame(event.data);
+        }
+      };
+
+      ws.onclose = (event) => {
+        console.warn('[ShrineProjector] WebSocket disconnected, code:', event.code);
+        if (pingInterval) clearInterval(pingInterval);
+
+        if (event.code === 4401 || event.code === 1008) {
+          alert('Access Denied: Invalid or missing authentication token.');
+          forgetToken();
+          authModal.style.display = 'flex';
+        } else {
+          activateHttpFallback();
+          setTimeout(connectWebSocket, 5000);
+        }
+      };
+
+      ws.onerror = (err) => {
+        console.error('[ShrineProjector] WebSocket error:', err);
+        activateHttpFallback();
+      };
+    }
+
+    function activateHttpFallback() {
+      if (isFallbackActive) return;
+      console.warn('[ShrineProjector] Activating Native MJPEG HTTP Stream Fallback...');
+      isFallbackActive = true;
+      canvas.style.display = 'none';
+      streamFallback.style.display = 'block';
+      streamFallback.src = `/stream.mjpg?token=${encodeURIComponent(token)}`;
+      modeBadge.className = 'badge mode-projector';
+      modeText.textContent = 'PROJECTOR // HTTP STREAM';
+      fpsCounter.textContent = '~30 FPS';
+      pingCounter.textContent = 'HTTP';
+    }
+
+    function handleJsonMessage(data) {
+      if (data.type === 'init') {
+        canControl = data.can_control;
+        hostWidth = data.width || 2560;
+        hostHeight = data.height || 1440;
+        canvas.width = hostWidth;
+        canvas.height = hostHeight;
+        virtualCursorX = hostWidth / 2;
+        virtualCursorY = hostHeight / 2;
+
+        if (data.stream_active !== undefined) {
+          updateStreamStateUI(data.stream_active);
+        }
+        if (data.profile) updateProfileUI(data.profile);
+      } else if (data.type === 'stream_state') {
+        updateStreamStateUI(data.active);
+        if (data.profile) updateProfileUI(data.profile);
+      } else if (data.type === 'pong') {
+        const rtt = Math.round(performance.now() - lastPingSend);
+        pingCounter.textContent = `${rtt} ms`;
+      }
+    }
+
+    async function handleBinaryFrame(blob) {
+      if (!isStreamActive) return;
+
+      if (isFallbackActive) {
+        console.log('[ShrineProjector] Resuming WebSocket canvas stream...');
+        isFallbackActive = false;
+        streamFallback.src = '';
+        streamFallback.style.display = 'none';
+        canvas.style.display = 'block';
+        modeBadge.className = canControl ? 'badge mode-interactive' : 'badge mode-projector';
+        modeText.textContent = canControl ? 'INTERACTIVE // ACTIVE' : 'PROJECTOR // ACTIVE';
+      }
+
+      if (window.createImageBitmap) {
+        try {
+          const bitmap = await createImageBitmap(blob);
+          ctx.drawImage(bitmap, 0, 0, canvas.width, canvas.height);
+          bitmap.close();
+          onFrameRendered();
+          return;
+        } catch (e) {
+          // Fallback to Image element
+        }
+      }
+
+      const url = URL.createObjectURL(blob);
+      const tempImg = new Image();
+      tempImg.onload = () => {
+        ctx.drawImage(tempImg, 0, 0, canvas.width, canvas.height);
+        URL.revokeObjectURL(url);
+        onFrameRendered();
+      };
+      tempImg.onerror = () => {
+        URL.revokeObjectURL(url);
+      };
+      tempImg.src = url;
+    }
+
+    function onFrameRendered() {
+      frameCount++;
+      const now = performance.now();
+      if (now - lastFpsUpdate >= 1000) {
+        const fps = Math.round((frameCount * 1000) / (now - lastFpsUpdate));
+        fpsCounter.textContent = `${fps} FPS`;
+        frameCount = 0;
+        lastFpsUpdate = now;
+      }
+    }
+
+    function sendPing() {
+      if (ws && ws.readyState === WebSocket.OPEN) {
+        lastPingSend = performance.now();
+        ws.send(JSON.stringify({ type: 'ping' }));
+      }
+    }
+
+    function sendInputEvent(evtType, payload) {
+      if (!canControl || !isStreamActive) {
+        console.warn('[INPUT_BLOCKED] canControl:', canControl, 'isStreamActive:', isStreamActive);
+        return;
+      }
+      if (ws && ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify({ type: evtType, ...payload }));
+      } else {
+        // Universal REST API Fallback (ensures control works even during reconnection or on HTTP MJPEG)
+        const endpointMap = {
+          'mouse_move': '/api/input/move',
+          'mouse_click': '/api/input/click',
+          'mouse_scroll': '/api/input/scroll',
+          'key_event': '/api/input/key'
+        };
+        const endpoint = endpointMap[evtType];
+        if (endpoint) {
+          fetch(`${endpoint}?token=${encodeURIComponent(token)}`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload)
+          }).catch((err) => console.error('[INPUT_REST_ERR]', err));
+        }
+      }
+    }
+
+    function getActiveDisplayElement() {
+      if (isFallbackActive && streamFallback.style.display !== 'none') {
+        return streamFallback;
+      }
+      return canvas;
+    }
+
+    function getDisplayCoordinates(e) {
+      const el = getActiveDisplayElement();
+      const rect = el.getBoundingClientRect();
+      const scaleX = hostWidth / rect.width;
+      const scaleY = hostHeight / rect.height;
+      const clientX = e.clientX !== undefined ? e.clientX : (e.touches && e.touches[0] ? e.touches[0].clientX : 0);
+      const clientY = e.clientY !== undefined ? e.clientY : (e.touches && e.touches[0] ? e.touches[0].clientY : 0);
+      return {
+        x: Math.max(0, Math.min(hostWidth, Math.round((clientX - rect.left) * scaleX))),
+        y: Math.max(0, Math.min(hostHeight, Math.round((clientY - rect.top) * scaleY)))
+      };
+    }
+
+    // --- Pointer / Mouse / Trackpad / Touch Events (iPadOS & Desktop & iPhone) ---
+    let isThrottlingMove = false;
+    let touchStartX = 0;
+    let touchStartY = 0;
+    let touchStartTime = 0;
+    let longPressTimer = null;
+    let isLongPressTriggered = false;
+    let isTouchDrag = false;
+
+    function handlePointerMove(e) {
+      if (!canControl || !isStreamActive) return;
+
+      // Mouse / Trackpad
+      if (e.pointerType === 'mouse' || e.pointerType === 'pen') {
+        if (isPointerLocked) {
+          virtualCursorX = Math.max(0, Math.min(hostWidth, virtualCursorX + e.movementX));
+          virtualCursorY = Math.max(0, Math.min(hostHeight, virtualCursorY + e.movementY));
+          if (!isThrottlingMove) {
+            isThrottlingMove = true;
+            setTimeout(() => { isThrottlingMove = false; }, 16);
+            sendInputEvent('mouse_move', { x: Math.round(virtualCursorX), y: Math.round(virtualCursorY) });
+          }
+        } else {
+          if (!isThrottlingMove) {
+            isThrottlingMove = true;
+            setTimeout(() => { isThrottlingMove = false; }, 16);
+            const { x, y } = getDisplayCoordinates(e);
+            sendInputEvent('mouse_move', { x, y });
+          }
+        }
+        return;
+      }
+
+      // Touch drag
+      if (e.pointerType === 'touch') {
+        const dist = Math.hypot(e.clientX - touchStartX, e.clientY - touchStartY);
+        if (dist > 35) {
+          if (longPressTimer) {
+            clearTimeout(longPressTimer);
+            longPressTimer = null;
+          }
+          isTouchDrag = true;
+          if (!isThrottlingMove) {
+            isThrottlingMove = true;
+            setTimeout(() => { isThrottlingMove = false; }, 16);
+            const { x, y } = getDisplayCoordinates(e);
+            sendInputEvent('mouse_move', { x, y });
+          }
+        }
+      }
+    }
+
+    function handlePointerDown(e) {
+      if (!canControl || !isStreamActive) return;
+
+      const el = getActiveDisplayElement();
+      el.focus();
+
+      // Case A: Mouse / Trackpad (iPad Magic Keyboard trackpad, physical mouse)
+      if (e.pointerType === 'mouse' || e.pointerType === 'pen') {
+        e.preventDefault();
+        const { x, y } = isPointerLocked ? { x: Math.round(virtualCursorX), y: Math.round(virtualCursorY) } : getDisplayCoordinates(e);
+        const isRight = (e.button === 2 || e.ctrlKey || armedRightClick);
+        if (armedRightClick) setArmedRightClick(false);
+        const button = isRight ? 'right' : 'left';
+        showTouchRipple(e.clientX, e.clientY, isRight);
+        sendInputEvent('mouse_click', { x, y, button, action: 'down' });
+        return;
+      }
+
+      // Case B: Mobile Touch Screen (iPhone / iPad screen tap)
+      if (e.pointerType === 'touch') {
+        touchStartX = e.clientX;
+        touchStartY = e.clientY;
+        touchStartTime = performance.now();
+        isLongPressTriggered = false;
+        isTouchDrag = false;
+
+        // Long-press hold for 500ms -> Right Click
+        if (longPressTimer) clearTimeout(longPressTimer);
+        longPressTimer = setTimeout(() => {
+          isLongPressTriggered = true;
+          if (navigator.vibrate) navigator.vibrate(50);
+          showTouchRipple(touchStartX, touchStartY, true);
+          const coords = getDisplayCoordinates({ clientX: touchStartX, clientY: touchStartY });
+          console.log('[TOUCH_RIGHT_CLICK_LONGPRESS]', coords);
+          sendInputEvent('mouse_click', { x: coords.x, y: coords.y, button: 'right', action: 'click' });
+        }, 500);
+      }
+    }
+
+    function handlePointerUp(e) {
+      if (!canControl || !isStreamActive) return;
+
+      // Case A: Mouse / Trackpad
+      if (e.pointerType === 'mouse' || e.pointerType === 'pen') {
+        e.preventDefault();
+        const { x, y } = isPointerLocked ? { x: Math.round(virtualCursorX), y: Math.round(virtualCursorY) } : getDisplayCoordinates(e);
+        const isRight = (e.button === 2 || e.ctrlKey);
+        const button = isRight ? 'right' : 'left';
+        sendInputEvent('mouse_click', { x, y, button, action: 'up' });
+        return;
+      }
+
+      // Case B: Mobile Touch Screen
+      if (e.pointerType === 'touch') {
+        if (longPressTimer) {
+          clearTimeout(longPressTimer);
+          longPressTimer = null;
+        }
+
+        if (isLongPressTriggered) {
+          isLongPressTriggered = false;
+          return;
+        }
+
+        const elapsed = performance.now() - touchStartTime;
+        const curX = e.clientX || touchStartX;
+        const curY = e.clientY || touchStartY;
+        const dist = Math.hypot(curX - touchStartX, curY - touchStartY);
+
+        // Tap recognized! (< 600ms duration, < 45px drift)
+        if (elapsed < 600 && dist < 45) {
+          e.preventDefault();
+          const isRight = armedRightClick;
+          if (armedRightClick) setArmedRightClick(false);
+
+          showTouchRipple(touchStartX, touchStartY, isRight);
+          const coords = getDisplayCoordinates({ clientX: touchStartX, clientY: touchStartY });
+          console.log('[TOUCH_TAP_CLICK]', coords, isRight ? 'right' : 'left');
+          // Atomic single click
+          sendInputEvent('mouse_click', { x: coords.x, y: coords.y, button: isRight ? 'right' : 'left', action: 'click' });
+        }
+      }
+    }
+
+    function handlePointerCancel(e) {
+      if (longPressTimer) {
+        clearTimeout(longPressTimer);
+        longPressTimer = null;
+      }
+      if (isLongPressTriggered || isTouchDrag) {
+        isLongPressTriggered = false;
+        return;
+      }
+      const elapsed = performance.now() - touchStartTime;
+      const curX = e.clientX || touchStartX;
+      const curY = e.clientY || touchStartY;
+      const dist = Math.hypot(curX - touchStartX, curY - touchStartY);
+      if (elapsed < 600 && dist < 45) {
+        const isRight = armedRightClick;
+        if (armedRightClick) setArmedRightClick(false);
+        showTouchRipple(touchStartX, touchStartY, isRight);
+        const coords = getDisplayCoordinates({ clientX: touchStartX, clientY: touchStartY });
+        console.log('[TOUCH_CANCEL_RECOVER_CLICK]', coords, isRight ? 'right' : 'left');
+        sendInputEvent('mouse_click', { x: coords.x, y: coords.y, button: isRight ? 'right' : 'left', action: 'click' });
+      }
+    }
+
+    function handleWheel(e) {
+      if (!canControl || !isStreamActive) return;
+      e.preventDefault();
+      sendInputEvent('mouse_scroll', { dy: e.deltaY });
+    }
+
+    // Context Menu: iPad Trackpad two-finger tap or right-click
+    function handleContextMenu(e) {
+      if (!canControl || !isStreamActive) return;
+      e.preventDefault();
+      e.stopPropagation();
+      const coords = getDisplayCoordinates(e);
+      showTouchRipple(e.clientX, e.clientY, true);
+      sendInputEvent('mouse_click', { x: coords.x, y: coords.y, button: 'right', action: 'click' });
+    }
+
+    // Attach dual event listeners to both Canvas and Stream Fallback Image
+    [canvas, streamFallback].forEach(el => {
+      el.addEventListener('pointermove', handlePointerMove, { passive: false });
+      el.addEventListener('pointerdown', handlePointerDown, { passive: false });
+      el.addEventListener('pointerup', handlePointerUp, { passive: false });
+      el.addEventListener('pointercancel', handlePointerCancel, { passive: false });
+      el.addEventListener('wheel', handleWheel, { passive: false });
+      el.addEventListener('contextmenu', handleContextMenu);
+    });
+
+    // Native Touch Event Listeners on Viewport for multi-touch gestures:
+    // 1. Two-finger tap = Right click
+    // 2. Two-finger vertical drag = Scroll wheel
+    const viewport = document.getElementById('viewport');
+    let touchCount = 0;
+    let twoFingerStart = 0;
+    let twoFingerMoved = false;
+    let lastTwoFingerY = 0;
+
+    viewport.addEventListener('touchstart', (e) => {
+      touchCount = e.touches.length;
+      if (touchCount === 2) {
+        if (longPressTimer) { clearTimeout(longPressTimer); longPressTimer = null; }
+        twoFingerStart = performance.now();
+        twoFingerMoved = false;
+        lastTwoFingerY = (e.touches[0].clientY + e.touches[1].clientY) / 2;
+      }
+    }, { passive: true });
+
+    viewport.addEventListener('touchmove', (e) => {
+      if (e.touches.length === 2 && canControl && isStreamActive) {
+        const midY = (e.touches[0].clientY + e.touches[1].clientY) / 2;
+        const dy = lastTwoFingerY - midY;
+        if (Math.abs(dy) > 3) {
+          twoFingerMoved = true;
+          sendInputEvent('mouse_scroll', { dy: dy * 2.2 });
+          lastTwoFingerY = midY;
+        }
+      }
+    }, { passive: false });
+
+    viewport.addEventListener('touchend', (e) => {
+      if (touchCount === 2 && !twoFingerMoved && canControl && isStreamActive) {
+        const elapsed = performance.now() - twoFingerStart;
+        if (elapsed < 400) {
+          // Two-finger tap -> Right Click!
+          if (navigator.vibrate) navigator.vibrate(50);
+          showTouchRipple(touchStartX, touchStartY, true);
+          const coords = getDisplayCoordinates({ clientX: touchStartX, clientY: touchStartY });
+          console.log('[TOUCH_TWO_FINGER_RIGHT_CLICK]', coords);
+          sendInputEvent('mouse_click', { x: coords.x, y: coords.y, button: 'right', action: 'click' });
+        }
+      }
+      touchCount = e.touches.length;
+    }, { passive: true });
+
+    // --- Keyboard Event Handling (iPad Magic Keyboard & Physical Keyboard) ---
+    // iPadOS nelen Cmd+huruf (Cmd+Space, Cmd+Q, Cmd+Tab) sebelum nyampe browser.
+    // Solusi: mode "Ctrl→Cmd" — Ctrl di iPad dikirim sebagai Cmd ke Mac.
+    // Kalau di iPad Modifier Keys di-swap (Command↔Control), tombol Cmd fisik = Cmd di Mac.
+    const MOD_KEY_NAMES = new Set(['Control', 'Meta', 'Alt', 'Shift', 'OS']);
+    const CODE_TO_KEY = {
+      Space: ' ', Minus: '-', Equal: '=', BracketLeft: '[', BracketRight: ']',
+      Backslash: '\\', Semicolon: ';', Quote: "'", Comma: ',', Period: '.',
+      Slash: '/', Backquote: '`'
+    };
+    let macKeys = true;
+    try { macKeys = localStorage.getItem('shrine_mac_keys') !== '0'; } catch (e) {}
+    const btnMacKeys = document.getElementById('btn-mackeys');
+    const macKeysText = document.getElementById('mackeys-text');
+
+    function renderMacKeys() {
+      if (!btnMacKeys) return;
+      btnMacKeys.classList.toggle('active-amber', macKeys);
+      macKeysText.textContent = macKeys ? 'Ctrl→Cmd' : 'Ctrl asli';
+    }
+    renderMacKeys();
+    if (btnMacKeys) {
+      btnMacKeys.addEventListener('click', (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        macKeys = !macKeys;
+        try { localStorage.setItem('shrine_mac_keys', macKeys ? '1' : '0'); } catch (err) {}
+        releaseHeldMods();
+        renderMacKeys();
+      });
+    }
+
+    // Modifier Mac yang lagi kita tahan di server (sumber kebenaran = flag event browser)
+    const heldMods = new Set();
+    const downKeyNames = new Map(); // e.code -> nama tombol yang dikirim saat keydown
+
+    function wantedMods(e) {
+      const m = new Set();
+      if (e.shiftKey) m.add('Shift');
+      if (e.altKey) m.add('Option');
+      if (e.metaKey) m.add('Command');
+      if (e.ctrlKey) m.add(macKeys ? 'Command' : 'Control');
+      return m;
+    }
+
+    function syncHeldMods(want) {
+      for (const m of [...heldMods]) {
+        if (!want.has(m)) {
+          sendInputEvent('key_event', { key: m, action: 'up' });
+          heldMods.delete(m);
+        }
+      }
+      for (const m of want) {
+        if (!heldMods.has(m)) {
+          sendInputEvent('key_event', { key: m, action: 'down' });
+          heldMods.add(m);
+        }
+      }
+    }
+
+    function releaseHeldMods() {
+      syncHeldMods(new Set());
+      sendInputEvent('key_release_all', {});
+    }
+
+    function hardwareKeyName(e) {
+      // Pakai e.code kalau ada Ctrl/Cmd/Option, biar Option+Q gak jadi 'œ' dan Ctrl+Q tetap 'q'
+      if ((e.ctrlKey || e.metaKey || e.altKey) && e.code) {
+        if (/^Key[A-Z]$/.test(e.code)) return e.code.slice(3).toLowerCase();
+        if (/^Digit[0-9]$/.test(e.code)) return e.code.slice(5);
+        if (CODE_TO_KEY[e.code]) return CODE_TO_KEY[e.code];
+      }
+      return e.key === 'Enter' ? 'Return' : e.key;
+    }
+
+    function handleHardwareKey(e, phase) {
+      if (!canControl || !isStreamActive) return;
+      if (e.key === 'Unidentified' || e.isComposing) return;
+      e.preventDefault();
+      const want = wantedMods(e);
+      syncHeldMods(want);
+      if (MOD_KEY_NAMES.has(e.key)) return; // modifier doang: cukup sinkron state
+      const mods = new Set([...want, ...getActiveModifiers()]);
+      // keyup pakai nama yang sama kayak keydown (Option dilepas duluan -> jangan jadi 'œ')
+      let keyName = hardwareKeyName(e);
+      if (e.code) {
+        if (phase === 'down') downKeyNames.set(e.code, keyName);
+        else if (downKeyNames.has(e.code)) { keyName = downKeyNames.get(e.code); downKeyNames.delete(e.code); }
+      }
+      sendInputEvent('key_event', {
+        key: keyName,
+        action: phase,
+        modifiers: [...mods],
+        exact_mods: true
+      });
+      if (phase === 'down' && getActiveModifiers().length > 0) {
+        releaseLatchedModifiers();
+      }
+    }
+
+    window.addEventListener('keydown', (e) => {
+      if (document.activeElement === termiusInput) return; // ditangani termiusInput
+      if (document.activeElement === tokenInput) return;
+      handleHardwareKey(e, 'down');
+    });
+
+    window.addEventListener('keyup', (e) => {
+      if (document.activeElement === tokenInput) return;
+      if (!canControl || !isStreamActive) return;
+      if (document.activeElement === termiusInput) {
+        // Ketikan biasa dikirim 'click' dari termiusInput; di sini cukup lepas modifier
+        syncHeldMods(wantedMods(e));
+        return;
+      }
+      handleHardwareKey(e, 'up');
+    });
+
+    // Pindah app di iPad / tab ketutup pas Cmd masih ditahan -> lepas semua di Mac
+    window.addEventListener('blur', () => { if (heldMods.size) releaseHeldMods(); });
+    document.addEventListener('visibilitychange', () => {
+      if (document.hidden && heldMods.size) releaseHeldMods();
+    });
+
+    // Palet shortcut Mac (cadangan kalau combo-nya tetap ketelen iPadOS)
+    document.querySelectorAll('.mac-shortcut').forEach(btn => {
+      btn.addEventListener('click', (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        if (!canControl || !isStreamActive) return;
+        const parts = btn.dataset.combo.split('+');
+        const key = parts.pop() || ' ';
+        const mods = parts;
+        mods.forEach(m => sendInputEvent('key_event', { key: m, action: 'down' }));
+        sendInputEvent('key_event', { key: key, action: 'click', modifiers: mods, exact_mods: true });
+        mods.slice().reverse().forEach(m => sendInputEvent('key_event', { key: m, action: 'up' }));
+        if (navigator.vibrate) navigator.vibrate(20);
+      });
+    });
+
+    // --- HUD auto-hide ---
+    const hudEl = document.querySelector('.hud');
+    const hudPill = document.getElementById('hud-pill');
+    const HUD_IDLE_MS = 3500;
+    let hudTimer = null;
+
+    function keyboardDocked() {
+      return document.activeElement === termiusInput;
+    }
+
+    function collapseHud() {
+      clearTimeout(hudTimer);
+      if (keyboardDocked() || getActiveModifiers().length > 0) {
+        scheduleHudCollapse();
+        return;
+      }
+      hudEl.classList.add('collapsed');
+      termiusBar.classList.add('collapsed');
+      hudPill.classList.add('show');
+    }
+
+    function scheduleHudCollapse() {
+      clearTimeout(hudTimer);
+      hudTimer = setTimeout(collapseHud, HUD_IDLE_MS);
+    }
+
+    function expandHud() {
+      hudEl.classList.remove('collapsed');
+      termiusBar.classList.remove('collapsed');
+      hudPill.classList.remove('show');
+      scheduleHudCollapse();
+    }
+
+    hudPill.addEventListener('click', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      expandHud();
+    });
+    hudPill.addEventListener('pointerdown', (e) => e.stopPropagation());
+    // Selama jari/mouse di HUD atau bar bawah, timer di-reset
+    [hudEl, termiusBar].forEach(el => {
+      el.addEventListener('pointerdown', scheduleHudCollapse);
+    });
+    // Tap layar Mac pas HUD kebuka -> langsung ngumpet
+    viewport.addEventListener('pointerdown', () => {
+      if (!hudEl.classList.contains('collapsed')) collapseHud();
+    });
+    scheduleHudCollapse();
+
+    init();
+  </script>
+</body>
+</html>

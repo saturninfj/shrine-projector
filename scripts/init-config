@@ -1,0 +1,55 @@
+#!/usr/bin/env python3
+"""
+Bikin config lokal dari config/shrine-config.example.json dengan token acak 256-bit.
+
+  python3 scripts/init-config            # bikin config/shrine-config.json kalau belum ada
+  python3 scripts/init-config --rotate   # ganti SEMUA token di config yang sudah ada
+
+Token baru dicetak sekali ke terminal. config/shrine-config.json di-gitignore: jangan di-commit.
+"""
+
+import json
+import os
+import secrets
+import sys
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parent.parent
+EXAMPLE = ROOT / "config" / "shrine-config.example.json"
+CONFIG = ROOT / "config" / "shrine-config.json"
+
+
+def new_token() -> str:
+    return "shrine-proj-" + secrets.token_urlsafe(32)
+
+
+def main() -> int:
+    rotate = "--rotate" in sys.argv[1:]
+    if CONFIG.exists() and not rotate:
+        print(f"{CONFIG} already exists. Use --rotate to replace its tokens.")
+        return 1
+
+    src = CONFIG if CONFIG.exists() else EXAMPLE
+    cfg = json.loads(src.read_text(encoding="utf-8"))
+    tokens = cfg.setdefault("security", {}).setdefault("auth_tokens", [])
+    for entry in tokens:
+        entry["token"] = new_token()
+
+    # Tulis atomik dengan permission 0600 (cuma pemilik yang bisa baca token).
+    tmp = CONFIG.with_suffix(".json.tmp")
+    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "w", encoding="utf-8") as f:
+        json.dump(cfg, f, indent=2)
+        f.write("\n")
+    os.replace(tmp, CONFIG)
+    os.chmod(CONFIG, 0o600)
+
+    print(f"Wrote {CONFIG} (mode 600)")
+    for entry in tokens:
+        print(f"  {entry.get('role', '?'):<7} {entry['token']}")
+    print("Restart the daemon to apply. Clients with an old token will be asked for the new one.")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

@@ -1,0 +1,40 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  launchd template. Replace __PROJECT_DIR__ with the absolute repo path, then:
+    sed "s#__PROJECT_DIR__#$PWD#g" scripts/shrine-projector.plist.template \
+      > ~/Library/LaunchAgents/local.shrine-projector.plist
+    plutil -lint ~/Library/LaunchAgents/local.shrine-projector.plist
+    launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/local.shrine-projector.plist
+  ProcessType=Interactive matters: without it launchd throttles the process and
+  audio capture runs slower than realtime (crackling).
+-->
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>local.shrine-projector</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>__PROJECT_DIR__/scripts/run.sh</string>
+    </array>
+    <key>WorkingDirectory</key>
+    <string>__PROJECT_DIR__</string>
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key>
+        <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+    </dict>
+    <key>ProcessType</key>
+    <string>Interactive</string>
+    <key>RunAtLoad</key>
+    <true/>
+    <key>KeepAlive</key>
+    <true/>
+    <key>ThrottleInterval</key>
+    <integer>10</integer>
+    <key>StandardOutPath</key>
+    <string>__PROJECT_DIR__/shrine-projector.log</string>
+    <key>StandardErrorPath</key>
+    <string>__PROJECT_DIR__/shrine-projector.err</string>
+</dict>
+</plist>

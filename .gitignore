@@ -1,0 +1,11 @@
+__pycache__/
+*.pyc
+*.log
+*.err
+.DS_Store
+.stream-manual-off
+
+# config lokal berisi token: JANGAN di-commit
+config/shrine-config.json
+config/*.tmp
+.venv/
