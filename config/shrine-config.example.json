@@ -36,5 +36,6 @@
     "fps": 30,
     "quality": 75,
     "default_profile": "full"
-  }
+  },
+  "remote_targets": {}
 }

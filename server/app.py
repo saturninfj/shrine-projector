@@ -20,6 +20,7 @@ from server.auth import AuthGate
 from server.capture import ScreenCaptureEngine
 from server.input import InputGuard
 from server.audio import audio_engine
+from server.remote import RemoteTargets
 
 logging.basicConfig(
     level=logging.INFO,
@@ -52,6 +53,7 @@ if _weak:
         f"(min {AuthGate.MIN_TOKEN_LEN} chars). Run: python3 scripts/init-config --rotate"
     )
 capture_engine = ScreenCaptureEngine(CONFIG)
+remote_targets = RemoteTargets(CONFIG, BASE_DIR / ".state")
 input_guard = InputGuard(
     max_rate_per_sec=CONFIG.get("security", {}).get("rate_limit_events_per_sec", 120),
     screen_size=(capture_engine.width, capture_engine.height),
@@ -268,6 +270,35 @@ async def toggle_stream(token: Optional[str] = Query(None)):
 
     await broadcast_stream_state()
     return {"status": "ok", "stream_active": active}
+
+# ── Remote targets (sesi remote ke mesin lain; admin/control token saja) ──
+def _require_control(token: Optional[str]):
+    token_info = auth_gate.verify_token(token)
+    if not token_info:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token")
+    if not auth_gate.can_control(token_info):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Control capability required")
+
+def _require_target(name: str):
+    if name not in remote_targets.targets:
+        raise HTTPException(status_code=404, detail="Unknown remote target")
+
+@app.get("/api/remote")
+async def remote_list(token: Optional[str] = Query(None)):
+    _require_control(token)
+    return {"targets": await asyncio.to_thread(remote_targets.list)}
+
+@app.post("/api/remote/{name}/start")
+async def remote_start(name: str, token: Optional[str] = Query(None)):
+    _require_control(token)
+    _require_target(name)
+    return await asyncio.to_thread(remote_targets.start, name)
+
+@app.post("/api/remote/{name}/stop")
+async def remote_stop(name: str, token: Optional[str] = Query(None)):
+    _require_control(token)
+    _require_target(name)
+    return await asyncio.to_thread(remote_targets.stop, name)
 
 @app.get("/stream.mjpg")
 async def mjpg_stream(token: Optional[str] = Query(None)):

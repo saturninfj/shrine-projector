@@ -123,5 +123,35 @@ class TestShrineProjectorSecurity(unittest.TestCase):
         self.assertEqual(len(gate.weak_tokens()), len(example["security"]["auth_tokens"]))
 
 
+class TestRemoteTargets(unittest.TestCase):
+    def test_start_ready_stop(self):
+        # Target palsu: proses yang buka port TCP sampai di-SIGTERM
+        import socket, tempfile, time
+        from server.remote import RemoteTargets
+        s = socket.socket(); s.bind(("127.0.0.1", 0)); port = s.getsockname()[1]; s.close()
+        holder = (f"import socket,time; s=socket.socket(); s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1); "
+                  f"s.bind(('127.0.0.1',{port})); s.listen(); time.sleep(60)")
+        with tempfile.TemporaryDirectory() as d:
+            rt = RemoteTargets({"remote_targets": {"box": {
+                "label": "Box", "start": [sys.executable, "-c", holder],
+                "ready_check": f"127.0.0.1:{port}", "url": "https://example.invalid/"}}}, Path(d))
+            self.assertFalse(rt.status("box")["running"])
+            rt.start("box")
+            for _ in range(50):
+                if rt.status("box")["ready"]:
+                    break
+                time.sleep(0.1)
+            self.assertTrue(rt.status("box")["ready"])
+            pid = rt._pid("box")
+            rt.start("box")  # start kedua gak boleh bikin proses baru
+            self.assertEqual(rt._pid("box"), pid)
+            rt.stop("box")
+            for _ in range(50):
+                if not rt.status("box")["running"]:
+                    break
+                time.sleep(0.1)
+            self.assertFalse(rt.status("box")["running"])
+
+
 if __name__ == "__main__":
     unittest.main()

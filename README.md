@@ -72,6 +72,23 @@ To run at login, render `scripts/shrine-projector.plist.template` (instructions 
 
 `scripts/projector` is a small CLI: `status`, `on`, `off`, `toggle`, `url`, `open`.
 
+## Remote targets (other machines)
+
+ShrineProjector only captures the Mac it runs on. To reach another machine (for example a Linux box running GNOME's built-in RDP server behind [Apache Guacamole](https://guacamole.apache.org/)), you can register a *remote target*. A **Remote** button then appears in the HUD for control-capable tokens, with Start / Open / Stop.
+
+```json
+"remote_targets": {
+  "linuxbox": {
+    "label": "Linux box",
+    "start": ["/usr/bin/python3", "/path/to/your-session-holder.py"],
+    "ready_check": "127.0.0.1:18080",
+    "url": "https://my-mac.tailnet.ts.net:8767/"
+  }
+}
+```
+
+ShrineProjector does not speak RDP/VNC itself. It runs your `start` command (which should wake the machine, open a tunnel, and clean up when it receives SIGTERM), reports it ready once `ready_check` accepts TCP connections, and opens `url` in a new tab. Note that Guacamole uses FreeRDP (C) under the hood, so this path does not carry the same "no third-party C in the protocol path" property as the Mac stream.
+
 ## Tests
 
 ```bash

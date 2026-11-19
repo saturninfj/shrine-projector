@@ -9,3 +9,4 @@ __pycache__/
 config/shrine-config.json
 config/*.tmp
 .venv/
+.state/
