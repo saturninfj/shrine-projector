@@ -652,9 +652,9 @@
       <button class="btn" id="btn-fullscreen">
         <span>⛶</span> Fullscreen
       </button>
-      <button class="btn" id="btn-remote" style="display: none;" title="Remote desktop ke mesin lain">
-        <span>🖥️</span> Remote
-      </button>
+      <a class="btn" id="btn-remote" href="/" style="display: none; text-decoration: none;" title="Ganti device (Mac / mesin lain)">
+        <span>⇄</span> Device
+      </a>
     </div>
   </div>
 
@@ -667,15 +667,6 @@
       <p>Enter your private bearer token to establish zero-trust screen streaming.</p>
       <input type="password" id="token-input" class="input-field" placeholder="shrine-proj-..." autofocus>
       <button class="btn-primary" id="btn-connect">Connect to Host</button>
-    </div>
-  </div>
-
-  <div class="modal-overlay" id="remote-modal" style="display: none;">
-    <div class="modal-card">
-      <h2>Remote desktop</h2>
-      <p>Nyalain sesi ke mesin lain. Bisa makan 1–2 menit kalau mesinnya lagi mati.</p>
-      <div id="remote-list"></div>
-      <button class="btn-primary" id="btn-remote-close" style="margin-top: 16px; background: transparent; border: 1px solid var(--border);">Tutup</button>
     </div>
   </div>
 
@@ -921,73 +912,14 @@
       onFrameRendered();
     };
 
-    // --- Remote targets (sesi remote ke mesin lain, didefinisikan di config server) ---
+    // --- Tombol "Device": muncul kalau server punya remote target (balik ke halaman pilih device) ---
     const btnRemote = document.getElementById('btn-remote');
-    const remoteModal = document.getElementById('remote-modal');
-    const remoteList = document.getElementById('remote-list');
-    let remotePoll = null;
-
-    function esc(s) {
-      return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
-    }
-
-    async function remoteCall(path, method = 'GET') {
-      const res = await fetch(`${path}?token=${encodeURIComponent(token)}`, { method });
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      return res.json();
-    }
-
-    function renderRemote(targets) {
-      remoteList.innerHTML = targets.map(t => {
-        const state = t.ready ? '🟢 Siap' : (t.running ? '🟡 Nyiapin…' : '⚪ Mati');
-        return `<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin:10px 0;">
-            <strong style="min-width:80px;">${esc(t.label)}</strong>
-            <span style="flex:1;color:var(--text-muted);font-size:13px;">${state}</span>
-            ${t.running
-              ? `<button class="btn" data-remote-stop="${esc(t.name)}">⏹ Stop</button>`
-              : `<button class="btn" data-remote-start="${esc(t.name)}">▶ Start</button>`}
-            <button class="btn" data-remote-open="${esc(t.url)}" ${t.ready ? '' : 'disabled style="opacity:.4"'}>↗ Buka</button>
-          </div>`;
-      }).join('');
-    }
-
-    async function refreshRemote() {
-      try { renderRemote((await remoteCall('/api/remote')).targets); }
-      catch (e) { remoteList.textContent = 'Gagal ambil status: ' + e.message; }
-    }
-
     async function setupRemote() {
       try {
-        const data = await remoteCall('/api/remote');
-        if (data.targets && data.targets.length) btnRemote.style.display = '';
+        const res = await fetch(`/api/remote?token=${encodeURIComponent(token)}`);
+        if (res.ok && ((await res.json()).targets || []).length) btnRemote.style.display = '';
       } catch (e) {}
     }
-
-    btnRemote.addEventListener('click', (e) => {
-      e.preventDefault(); e.stopPropagation();
-      remoteModal.style.display = 'flex';
-      refreshRemote();
-      if (remotePoll) clearInterval(remotePoll);
-      remotePoll = setInterval(refreshRemote, 3000);
-    });
-
-    document.getElementById('btn-remote-close').addEventListener('click', () => {
-      remoteModal.style.display = 'none';
-      if (remotePoll) { clearInterval(remotePoll); remotePoll = null; }
-    });
-
-    remoteList.addEventListener('click', async (e) => {
-      const b = e.target.closest('button');
-      if (!b) return;
-      e.preventDefault(); e.stopPropagation();
-      if (b.dataset.remoteOpen) { window.open(b.dataset.remoteOpen, '_blank', 'noopener'); return; }
-      const name = b.dataset.remoteStart || b.dataset.remoteStop;
-      if (!name) return;
-      b.disabled = true;
-      try { await remoteCall(`/api/remote/${encodeURIComponent(name)}/${b.dataset.remoteStart ? 'start' : 'stop'}`, 'POST'); }
-      catch (err) { alert('Remote gagal: ' + err.message); }
-      refreshRemote();
-    });
 
     function forgetToken() {
       token = null;

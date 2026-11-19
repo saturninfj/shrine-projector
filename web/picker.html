@@ -1,0 +1,238 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+  <title>ShrineProjector</title>
+  <style>
+    :root {
+      --bg: #090a0f;
+      --card: #11131a;
+      --border: rgba(255, 255, 255, 0.1);
+      --accent: #e8500a;
+      --accent-glow: rgba(232, 80, 10, 0.25);
+      --ok: #10b981;
+      --warn: #f59e0b;
+      --text: #f3f4f6;
+      --text-muted: #9ca3af;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      background: var(--bg);
+      color: var(--text);
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      min-height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 24px 16px;
+    }
+    main { width: 100%; max-width: 520px; }
+    .brand { font-size: 13px; letter-spacing: 0.08em; color: var(--text-muted); margin-bottom: 6px; }
+    .brand b { color: var(--accent); }
+    h1 { font-size: 24px; letter-spacing: -0.02em; margin-bottom: 20px; }
+    .device {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 16px;
+      padding: 18px;
+      margin-bottom: 12px;
+      display: flex;
+      align-items: center;
+      gap: 14px;
+    }
+    .device .icon { font-size: 28px; width: 40px; text-align: center; }
+    .device .info { flex: 1; min-width: 0; }
+    .device .name { font-weight: 600; font-size: 16px; }
+    .device .state { color: var(--text-muted); font-size: 13px; margin-top: 2px; }
+    .actions { display: flex; gap: 8px; flex-shrink: 0; }
+    button, a.btn {
+      background: var(--accent);
+      color: #fff;
+      border: none;
+      border-radius: 10px;
+      padding: 10px 16px;
+      font-size: 14px;
+      font-weight: 600;
+      cursor: pointer;
+      text-decoration: none;
+      font-family: inherit;
+    }
+    button.secondary { background: transparent; border: 1px solid var(--border); color: var(--text-muted); }
+    button:disabled { opacity: 0.5; cursor: default; }
+    .dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 6px; background: #4b5563; }
+    .dot.ok { background: var(--ok); }
+    .dot.warn { background: var(--warn); animation: pulse 1.2s infinite; }
+    @keyframes pulse { 50% { opacity: 0.3; } }
+    .modal { display: none; }
+    .modal.show { display: block; }
+    input {
+      width: 100%;
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 12px 14px;
+      color: var(--text);
+      font-family: ui-monospace, 'SF Mono', Menlo, monospace;
+      font-size: 13px;
+      margin: 12px 0;
+      outline: none;
+    }
+    input:focus { border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent-glow); }
+    .muted { color: var(--text-muted); font-size: 14px; line-height: 1.5; }
+    .err { color: #f87171; font-size: 13px; margin-top: 8px; min-height: 1em; }
+  </style>
+</head>
+<body>
+  <main>
+    <div class="brand"><b>SHRINE</b>PROJECTOR</div>
+
+    <section id="auth" class="modal">
+      <h1>Masuk</h1>
+      <p class="muted">Tempel token akses. Browser bakal ingat setelah diterima.</p>
+      <input type="password" id="token-input" placeholder="shrine-proj-..." autocomplete="off">
+      <button id="btn-auth">Lanjut</button>
+      <div class="err" id="auth-err"></div>
+    </section>
+
+    <section id="picker" class="modal">
+      <h1>Pilih device</h1>
+      <div id="devices"></div>
+      <div class="err" id="picker-err"></div>
+    </section>
+  </main>
+
+  <script>
+    const TOKEN_KEY = 'shrine_projector_token';
+    let token = null;
+    try { token = new URLSearchParams(location.search).get('token'); } catch (e) {}
+    let stored = null;
+    try { stored = localStorage.getItem(TOKEN_KEY); } catch (e) {}
+    token = token || stored;
+
+    const $ = (id) => document.getElementById(id);
+    const esc = (s) => String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+    let hostLabel = 'This Mac';
+    let targets = [];
+    let pending = null;      // nama target yang lagi disiapin -> auto masuk begitu siap
+    let poll = null;
+
+    function stripTokenFromUrl() {
+      try { const u = new URL(location); u.searchParams.delete('token'); history.replaceState({}, '', u); } catch (e) {}
+    }
+
+    async function api(path, method = 'GET') {
+      const res = await fetch(`${path}${path.includes('?') ? '&' : '?'}token=${encodeURIComponent(token)}`, { method });
+      if (!res.ok) { const e = new Error(`HTTP ${res.status}`); e.status = res.status; throw e; }
+      return res.json();
+    }
+
+    function showAuth(msg) {
+      $('picker').classList.remove('show');
+      $('auth').classList.add('show');
+      $('auth-err').textContent = msg || '';
+      $('token-input').focus();
+    }
+
+    async function boot() {
+      if (!token) return showAuth();
+      try {
+        const st = await api('/api/status');
+        try { localStorage.setItem(TOKEN_KEY, token); } catch (e) {}
+        stripTokenFromUrl();
+        hostLabel = st.host_label || hostLabel;
+        if (st.can_control) {
+          try { targets = (await api('/api/remote')).targets || []; } catch (e) { targets = []; }
+        }
+        $('auth').classList.remove('show');
+        $('picker').classList.add('show');
+        render();
+        if (targets.length) startPolling();
+      } catch (e) {
+        if (e.status === 401) {
+          // token di URL basi tapi ada token tersimpan yang beda: coba yang tersimpan
+          if (stored && token !== stored) { token = stored; stripTokenFromUrl(); return boot(); }
+          try { localStorage.removeItem(TOKEN_KEY); } catch (_) {}
+          stripTokenFromUrl();
+          token = null;
+          return showAuth('Token ditolak.');
+        }
+        showAuth('Gagal nyambung ke daemon: ' + e.message);
+      }
+    }
+
+    function stateOf(t) {
+      if (t.ready) return ['ok', 'Siap'];
+      if (t.running) return ['warn', 'Nyiapin… (bisa 1–2 menit kalau PC-nya mati)'];
+      return ['', 'Mati / standby'];
+    }
+
+    function render() {
+      let html = `
+        <div class="device">
+          <div class="icon">🖥️</div>
+          <div class="info"><div class="name">${esc(hostLabel)}</div>
+            <div class="state"><span class="dot ok"></span>Online</div></div>
+          <div class="actions"><a class="btn" href="/mac">Buka</a></div>
+        </div>`;
+      for (const t of targets) {
+        const [cls, text] = stateOf(t);
+        const busy = pending === t.name && !t.ready;
+        html += `
+        <div class="device">
+          <div class="icon">🐧</div>
+          <div class="info"><div class="name">${esc(t.label)}</div>
+            <div class="state"><span class="dot ${cls}"></span>${esc(text)}</div></div>
+          <div class="actions">
+            ${t.running ? `<button class="secondary" data-stop="${esc(t.name)}">Stop</button>` : ''}
+            <button data-connect="${esc(t.name)}" ${busy ? 'disabled' : ''}>${busy ? 'Nunggu…' : 'Buka'}</button>
+          </div>
+        </div>`;
+      }
+      $('devices').innerHTML = html;
+    }
+
+    async function refresh() {
+      try {
+        targets = (await api('/api/remote')).targets || [];
+        render();
+        const t = targets.find(x => x.name === pending);
+        if (t && t.ready) { pending = null; location.href = t.url; }
+      } catch (e) { $('picker-err').textContent = 'Status gagal: ' + e.message; }
+    }
+
+    function startPolling() {
+      if (poll) clearInterval(poll);
+      poll = setInterval(refresh, 2500);
+    }
+
+    $('devices').addEventListener('click', async (e) => {
+      const b = e.target.closest('button');
+      if (!b) return;
+      $('picker-err').textContent = '';
+      try {
+        if (b.dataset.connect) {
+          const t = targets.find(x => x.name === b.dataset.connect);
+          if (t && t.ready) { location.href = t.url; return; }
+          pending = b.dataset.connect;
+          await api(`/api/remote/${encodeURIComponent(pending)}/start`, 'POST');
+        } else if (b.dataset.stop) {
+          if (pending === b.dataset.stop) pending = null;
+          await api(`/api/remote/${encodeURIComponent(b.dataset.stop)}/stop`, 'POST');
+        }
+      } catch (err) { $('picker-err').textContent = 'Gagal: ' + err.message; }
+      refresh();
+    });
+
+    $('btn-auth').addEventListener('click', () => {
+      const v = $('token-input').value.trim();
+      if (!v) return;
+      token = v; stored = null;
+      boot();
+    });
+    $('token-input').addEventListener('keydown', (e) => { if (e.key === 'Enter') $('btn-auth').click(); });
+
+    boot();
+  </script>
+</body>
+</html>

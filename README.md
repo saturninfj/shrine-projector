@@ -74,7 +74,7 @@ To run at login, render `scripts/shrine-projector.plist.template` (instructions 
 
 ## Remote targets (other machines)
 
-ShrineProjector only captures the Mac it runs on. To reach another machine (for example a Linux box running GNOME's built-in RDP server behind [Apache Guacamole](https://guacamole.apache.org/)), you can register a *remote target*. A **Remote** button then appears in the HUD for control-capable tokens, with Start / Open / Stop.
+ShrineProjector only captures the Mac it runs on. To reach another machine (for example a Linux box running GNOME's built-in RDP server behind [Apache Guacamole](https://guacamole.apache.org/)), you can register a *remote target*. Once at least one target exists, `/` becomes a device picker (this Mac, named by `server.host_label`, plus each target) and the Mac stream moves to `/mac`; a **Device** button in the stream HUD leads back. Picking a target starts it, waits until it is ready, then opens its `url`. View-only tokens only see the Mac.
 
 ```json
 "remote_targets": {

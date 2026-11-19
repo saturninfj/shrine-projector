@@ -2,7 +2,8 @@
   "server": {
     "bind_host": "127.0.0.1",
     "port": 8765,
-    "public_url": ""
+    "public_url": "",
+    "host_label": "This Mac"
   },
   "security": {
     "allow_interactive_mode": true,

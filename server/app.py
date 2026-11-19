@@ -181,13 +181,20 @@ async def lifespan(app: FastAPI):
 app = FastAPI(title="ShrineProjector", lifespan=lifespan)
 app.add_middleware(SubnetFirewallMiddleware)
 
+def _html(name: str) -> HTMLResponse:
+    page = WEB_DIR / name
+    if not page.exists():
+        raise HTTPException(status_code=404, detail="Web client not found")
+    return HTMLResponse(content=page.read_text(encoding="utf-8"))
+
 @app.api_route("/", methods=["GET", "HEAD"], response_class=HTMLResponse)
 async def serve_index():
-    index_file = WEB_DIR / "index.html"
-    if not index_file.exists():
-        raise HTTPException(status_code=404, detail="Web client not found")
-    with open(index_file, "r", encoding="utf-8") as f:
-        return HTMLResponse(content=f.read())
+    # Ada remote target = halaman pilih device dulu; gak ada = langsung stream Mac ini.
+    return _html("picker.html" if remote_targets.targets else "index.html")
+
+@app.api_route("/mac", methods=["GET", "HEAD"], response_class=HTMLResponse)
+async def serve_host_stream():
+    return _html("index.html")
 
 @app.get("/api/status")
 async def get_status(token: Optional[str] = Query(None)):
@@ -208,6 +215,7 @@ async def get_status(token: Optional[str] = Query(None)):
     return {
         "status": "online",
         "service": "ShrineProjector",
+        "host_label": CONFIG.get("server", {}).get("host_label", "This Mac"),
         "stream_active": capture_engine.is_active,
         "manual_off": is_manual_off(),
         "profile": capture_engine.profile,
