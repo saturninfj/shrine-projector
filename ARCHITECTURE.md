@@ -5,16 +5,20 @@ This describes the code as it is, not a roadmap. See the README for the disclaim
 ## Components
 
 ```
- Browser client (web/index.html)                      macOS host daemon (server/)
+ Browser client (web/index.html)                      Host daemon (server/)
  ─────────────────────────────                        ─────────────────────────────────────────
- canvas  ◄── JPEG frames ───────── /ws/stream ──────  capture.py   ffmpeg avfoundation → MJPEG
- WebAudio◄── PCM chunks ────────── /ws/audio  ──────  audio.py     BlackHole via PortAudio (ffmpeg fallback)
- pointer/keyboard ── JSON events ─ /ws/stream ──────► input.py     InputGuard → CoreGraphics (ctypes)
+ canvas  ◄── JPEG frames ───────── /ws/stream ──────  capture.py   macOS: ffmpeg avfoundation → MJPEG
+                                                                   Linux: wf-recorder (Wayland) / ffmpeg
+ WebAudio◄── PCM chunks ────────── /ws/audio  ──────  audio.py     macOS: BlackHole via PortAudio
+                                                                   Linux: PulseAudio / PipeWire monitor
+ pointer/keyboard ── JSON events ─ /ws/stream ──────► input.py     InputGuard →
+                                                                   macOS: CoreGraphics (ctypes)
+                                                                   Linux: /dev/uinput (python-evdev)
  HTTP fallback ───── /stream.mjpg, /api/input/* ────► app.py       FastAPI + uvicorn
                                                       auth.py      token table, constant-time compare
 ```
 
-Everything is in one Python process. `ffmpeg` runs as a child process only while capture is active.
+Everything is in one Python process. Screen capture runs as a child process (`ffmpeg` or `wf-recorder`) only while capture is active.
 
 ## Request path and gates
 
@@ -28,12 +32,12 @@ At startup the daemon refuses to run if any configured token is shorter than 32 
 
 ## Input guard
 
-`InputGuard` (server/input.py) sits between the network and CoreGraphics:
+`InputGuard` (server/input.py) sits between the network and the host input system (CoreGraphics on macOS, `/dev/uinput` on Linux):
 
 - rate limit (sliding one-second window, `rate_limit_events_per_sec`)
 - coordinates clamped to the detected screen size
-- keyboard: modifiers are applied per event from the client's flags, and every held key is released when the client blurs, hides or disconnects, so a dropped connection cannot leave Cmd stuck down
-- paste: text is reduced to plain UTF-8, null bytes removed, length capped (`max_clipboard_chars`), written with `pbcopy`, then Cmd+V is sent
+- keyboard: modifiers are applied per event from the client's flags, and every held key is released when the client blurs, hides or disconnects, so a dropped connection cannot leave Cmd/Ctrl stuck down
+- paste: text is reduced to plain UTF-8, null bytes removed, length capped (`max_clipboard_chars`), written with clipboard commands (`pbcopy` on macOS, `wl-copy`/`xclip` on Linux), then Cmd+V / Ctrl+V is sent
 
 ## Capture lifecycle
 
@@ -59,4 +63,4 @@ Check `app.py` for the exact field names; it is the source of truth.
 
 ## Non-goals
 
-No file transfer, remote shell, port forwarding, relay/rendezvous service, NAT traversal, host-to-client clipboard sync, multi-monitor selection UI, or non-macOS hosts.
+No file transfer, remote shell, port forwarding, relay/rendezvous service, NAT traversal, host-to-client clipboard sync, or multi-monitor selection UI.

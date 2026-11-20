@@ -2,3 +2,4 @@ fastapi==0.163.1
 uvicorn==0.54.0
 websockets==17.4
 sounddevice==0.5.1
+evdev==1.9.1; sys_platform == 'linux'

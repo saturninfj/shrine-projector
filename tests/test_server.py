@@ -153,10 +153,6 @@ class TestRemoteTargets(unittest.TestCase):
             self.assertFalse(rt.status("box")["running"])
 
 
-if __name__ == "__main__":
-    unittest.main()
-
-
 class TestTailscaleIdentity(unittest.TestCase):
     def _run(self, client_ip, login, qs=b""):
         import asyncio
@@ -182,3 +178,131 @@ class TestTailscaleIdentity(unittest.TestCase):
         # LAN/IP Tailscale langsung ke port daemon: header bisa dipalsuin -> diabaikan
         self.assertEqual(self._run("192.168.18.50", "owner@github", b""), "")
         self.assertEqual(self._run("100.81.125.55", "owner@github", b""), "")
+
+
+class TestMultiPlatformAdapter(unittest.TestCase):
+    def test_input_controller_instantiation_and_methods(self):
+        from server.input import InputController, DummyInputBackend
+        ctrl = InputController(screen_size=(1920, 1080))
+        self.assertIsNotNone(ctrl.backend)
+        # Verify methods execute without exception
+        ctrl.mouse_move(100, 100)
+        ctrl.move(100, 100)
+        ctrl.mouse_drag(150, 150)
+        ctrl.drag(150, 150)
+        ctrl.mouse_click(100, 100, "left", "click")
+        ctrl.click(100, 100, "right", "down")
+        ctrl.click(100, 100, "right", "up")
+        ctrl.mouse_scroll(5)
+        ctrl.scroll(-5)
+        ctrl.key_event("a", "down")
+        ctrl.key_event("a", "up")
+        ctrl.key_event("Enter", "press")
+        ctrl.release_all_modifiers()
+        ctrl.paste_text("hello")
+        ctrl.update_screen_size(2560, 1440)
+        self.assertEqual(ctrl.screen_width, 2560)
+        self.assertEqual(ctrl.screen_height, 1440)
+
+    def test_dummy_backend_fallback(self):
+        from server.input import DummyInputBackend
+        dummy = DummyInputBackend((1920, 1080))
+        dummy.mouse_move(50, 50)
+        dummy.mouse_click(50, 50, "left", "click")
+        dummy.mouse_scroll(10)
+        dummy.key_event("Shift", "down")
+        dummy.release_all_modifiers()
+        dummy.paste_text("test")
+        dummy.update_screen_size(800, 600)
+        self.assertEqual(dummy.screen_width, 800)
+
+    def test_linux_screen_resolution_fallback(self):
+        from server.input import get_linux_screen_resolution
+        # Without wlr-randr or xrandr matching, should return default 1920x1080
+        w, h = get_linux_screen_resolution()
+        self.assertIsInstance(w, int)
+        self.assertIsInstance(h, int)
+        self.assertGreater(w, 0)
+        self.assertGreater(h, 0)
+
+    def test_linux_key_mappings(self):
+        from server.input import WEB_TO_EVDEV_KEY_MAP
+        self.assertEqual(WEB_TO_EVDEV_KEY_MAP["Enter"], "KEY_ENTER")
+        self.assertEqual(WEB_TO_EVDEV_KEY_MAP["Backspace"], "KEY_BACKSPACE")
+        self.assertEqual(WEB_TO_EVDEV_KEY_MAP["Shift"], "KEY_LEFTSHIFT")
+        self.assertEqual(WEB_TO_EVDEV_KEY_MAP["Control"], "KEY_LEFTCTRL")
+        self.assertEqual(WEB_TO_EVDEV_KEY_MAP["Alt"], "KEY_LEFTALT")
+        self.assertEqual(WEB_TO_EVDEV_KEY_MAP["Meta"], "KEY_LEFTMETA")
+        self.assertEqual(WEB_TO_EVDEV_KEY_MAP["ArrowUp"], "KEY_UP")
+        self.assertEqual(WEB_TO_EVDEV_KEY_MAP["a"], "KEY_A")
+        self.assertEqual(WEB_TO_EVDEV_KEY_MAP["Z"], "KEY_Z")
+        self.assertEqual(WEB_TO_EVDEV_KEY_MAP["1"], "KEY_1")
+
+    def test_audio_engine_linux_fallback_non_crash(self):
+        from server.audio import AudioEngine
+        import asyncio
+        engine = AudioEngine()
+        engine.ensure_multi_output()
+
+        async def run_test():
+            await engine._stop_capture()
+        asyncio.run(run_test())
+
+    def test_linux_uinput_backend_mock(self):
+        from unittest.mock import MagicMock, patch
+        from server.input import LinuxUInputBackend
+        with patch("server.input.LINUX_EVDEV_AVAILABLE", True), \
+             patch("server.input.e") as mock_e, \
+             patch("server.input.UInput") as mock_uinput, \
+             patch("server.input.AbsInfo") as mock_absinfo:
+            mock_e.ecodes = {"KEY_A": 30, "KEY_ENTER": 28, "BTN_LEFT": 272, "BTN_RIGHT": 273, "BTN_MIDDLE": 274, "REL_WHEEL": 8, "ABS_X": 0, "ABS_Y": 1}
+            mock_e.KEY_A = 30
+            mock_e.KEY_ENTER = 28
+            mock_e.BTN_LEFT = 272
+            mock_e.BTN_RIGHT = 273
+            mock_e.BTN_MIDDLE = 274
+            mock_e.REL_WHEEL = 8
+            mock_e.ABS_X = 0
+            mock_e.ABS_Y = 1
+            mock_e.EV_KEY = 1
+            mock_e.EV_ABS = 3
+            mock_e.EV_REL = 2
+
+            mock_mouse = MagicMock()
+            mock_kbd = MagicMock()
+            mock_uinput.side_effect = [mock_mouse, mock_kbd]
+
+            backend = LinuxUInputBackend((1920, 1080))
+            self.assertTrue(backend.available)
+
+            backend.mouse_move(500, 400)
+            mock_mouse.write.assert_any_call(mock_e.EV_ABS, mock_e.ABS_X, 500)
+            mock_mouse.write.assert_any_call(mock_e.EV_ABS, mock_e.ABS_Y, 400)
+
+            backend.mouse_click(500, 400, "left", "click")
+            mock_mouse.write.assert_any_call(mock_e.EV_KEY, mock_e.BTN_LEFT, 1)
+            mock_mouse.write.assert_any_call(mock_e.EV_KEY, mock_e.BTN_LEFT, 0)
+
+            backend.mouse_scroll(-10)
+            mock_mouse.write.assert_any_call(mock_e.EV_REL, mock_e.REL_WHEEL, 1)
+
+            backend.key_event("Enter", "down")
+            mock_kbd.write.assert_any_call(mock_e.EV_KEY, mock_e.KEY_ENTER, 1)
+
+            backend.key_event("Enter", "up")
+            mock_kbd.write.assert_any_call(mock_e.EV_KEY, mock_e.KEY_ENTER, 0)
+
+            backend.release_all_modifiers()
+            mock_kbd.syn.assert_called()
+
+    def test_capture_engine_profiles(self):
+        from server.capture import ScreenCaptureEngine
+        cfg = {"display": {"width": 1920, "height": 1080, "fps": 30}}
+        engine = ScreenCaptureEngine(cfg)
+        self.assertIn("full", engine.profiles)
+        self.assertIn("kafe", engine.profiles)
+
+
+if __name__ == "__main__":
+    unittest.main()
+

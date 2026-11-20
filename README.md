@@ -29,10 +29,10 @@ Being precise here matters more than sounding impressive.
 
 | Area | Current behaviour |
 |---|---|
-| Platform | macOS host only (Apple Silicon tested). Linux/Windows hosts are not implemented. |
-| Video | `ffmpeg` avfoundation screen capture → MJPEG frames over WebSocket. Two profiles: `full` (native res, ~30 fps) and `kafe` (1280 px, 12 fps, for slow networks). |
-| Audio | System audio via the [BlackHole](https://github.com/ExistentialAudio/BlackHole) loopback driver, captured with PortAudio (`sounddevice`), PCM over WebSocket. |
-| Input | Mouse, scroll, keyboard and paste injected with CoreGraphics via `ctypes`. Rate-limited (default 120 events/s), coordinates clamped to the screen. |
+| Platform | macOS (Apple Silicon / Intel) and Linux (Ubuntu, Debian, Fedora, Raspberry Pi OS; Wayland wlroots & X11). |
+| Video | Hardware-accelerated screen capture → MJPEG frames over WebSocket.<br/>• macOS: `ffmpeg` via `avfoundation`<br/>• Linux: `wf-recorder` (Wayland/wlroots) or `ffmpeg` (`x11grab`/`kmsgrab`).<br/>Two profiles: `full` (native res, ~30 fps) and `kafe` (1280 px, 12 fps, for slow networks). |
+| Audio | System audio PCM over WebSocket.<br/>• macOS: via [BlackHole](https://github.com/ExistentialAudio/BlackHole) loopback driver with PortAudio (`sounddevice`).<br/>• Linux: via PulseAudio/PipeWire monitor source. |
+| Input | Mouse, scroll, keyboard and paste injected natively:<br/>• macOS: CoreGraphics via `ctypes`<br/>• Linux: kernel `/dev/uinput` via `python-evdev` (virtual absolute tablet/mouse + keyboard).<br/>Rate-limited (default 120 events/s), coordinates clamped to the screen. |
 | Auth | Static bearer tokens from a local config file, compared in constant time. Each token is either `admin` (view + control) or `viewer` (view only; input is dropped server-side). The daemon refuses to start with placeholder or short tokens. |
 | Network gate | Source-IP allow-list (default: loopback + Tailscale CGNAT range). Bind address is configurable; default is `127.0.0.1`, intended to sit behind `tailscale serve` for HTTPS. |
 | Clipboard | Plain UTF-8 text only, null bytes stripped, length-capped (default 64 KiB). Host → client clipboard sync does not exist. |
@@ -59,6 +59,30 @@ python3 scripts/init-config          # writes config/shrine-config.json (mode 60
 ```
 
 Grant the terminal (or the launchd job) **Screen Recording** and **Accessibility** permissions in System Settings → Privacy & Security, otherwise frames are black and input is ignored.
+
+## Setup (Linux: Ubuntu / Debian / Fedora / Raspberry Pi OS)
+
+Requirements: Python 3.11+, `wf-recorder` (Wayland/wlroots compositors like labwc/Sway/Wayfire) or `ffmpeg` (X11), `libportaudio2`, and write access to `/dev/uinput` for hardware virtual input.
+
+```bash
+# Ubuntu / Debian / Raspberry Pi OS
+sudo apt install -y python3-venv python3-pip wf-recorder libportaudio2
+
+# Fedora
+sudo dnf install -y python3-virtualenv python3-pip wf-recorder portaudio
+
+# Grant non-root user permission to emit virtual input events via /dev/uinput
+sudo usermod -a -G input $USER
+echo 'KERNEL=="uinput", GROUP="input", MODE="0660"' | sudo tee /etc/udev/rules.d/99-uinput.rules
+sudo udevadm control --reload-rules && sudo udevadm trigger /dev/uinput
+
+# Clone & run
+git clone https://github.com/saturninfj/shrine-projector.git
+cd shrine-projector
+python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
+python3 scripts/init-config
+./scripts/run.sh
+```
 
 Expose it to your tailnet over HTTPS, without opening a LAN port:
 

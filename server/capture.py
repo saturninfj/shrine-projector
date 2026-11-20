@@ -1,9 +1,12 @@
 """
 ShrineProjector Screen Capture Engine
 Hardware-accelerated continuous frame capture with zero-lag atomic buffer broadcasting
+Supports macOS (AVFoundation) and Linux (wf-recorder / ffmpeg x11grab/kmsgrab).
 Supports dynamic activate/deactivate to completely release RAM & CPU when idle.
 """
 
+import os
+import shutil
 import asyncio
 import logging
 import subprocess
@@ -34,6 +37,15 @@ class ScreenCaptureEngine:
                     logger.info(f"ScreenCaptureEngine dynamically detected native resolution: {w}x{h}")
             except Exception as e:
                 logger.warning(f"Failed to auto-detect native resolution: {e}")
+        elif sys.platform == "linux":
+            try:
+                from .input import get_linux_screen_resolution
+                w, h = get_linux_screen_resolution()
+                if w > 0 and h > 0:
+                    self.width, self.height = w, h
+                    logger.info(f"ScreenCaptureEngine dynamically detected Linux resolution: {w}x{h}")
+            except Exception as e:
+                logger.warning(f"Failed to auto-detect Linux resolution: {e}")
 
         # Profil kualitas stream. "kafe" = hemat bandwidth buat WiFi kafe/seluler.
         # Ukuran canvas di client tetap resolusi asli (koordinat mouse gak berubah),
@@ -78,7 +90,7 @@ class ScreenCaptureEngine:
         logger.info(f"Screen capture engine activated at ~{self.fps} FPS")
 
     async def stop(self):
-        """Stop the capture worker and kill ffmpeg process (Deactivate / 0% RAM)"""
+        """Stop the capture worker and kill capture process (Deactivate / 0% RAM)"""
         if not self._running:
             return
         self._running = False
@@ -106,10 +118,10 @@ class ScreenCaptureEngine:
             self._proc = None
 
         self._latest_frame = None
-        logger.info("Screen capture engine deactivated (FFmpeg terminated, RAM freed)")
+        logger.info("Screen capture engine deactivated (FFmpeg/wf-recorder terminated, RAM freed)")
 
     async def set_profile(self, name: str) -> bool:
-        """Ganti profil kualitas. Kalau capture lagi jalan, ffmpeg di-restart pakai profil baru."""
+        """Ganti profil kualitas. Kalau capture lagi jalan, worker di-restart pakai profil baru."""
         if name not in self.profiles:
             raise ValueError(f"profil gak dikenal: {name}")
         if name == self.profile:
@@ -136,35 +148,83 @@ class ScreenCaptureEngine:
         return False
 
     async def _capture_loop(self):
-        """Continuous FFmpeg frame reader using atomic boundary detection"""
+        """Continuous frame reader using atomic boundary detection"""
         while self._running:
             try:
-                # Explicit AVFoundation screen device name to prevent picking up USB cameras (e.g. Osmo Pocket, webcams)
-                screen_dev = str(self.screen_index)
+                prof = self.profiles.get(self.profile, self.profiles["full"])
+                fps_val = str(prof.get("fps", self.fps))
+                q_val = str(prof.get("q", self.ffmpeg_q))
+
                 if sys.platform == "darwin":
+                    # Explicit AVFoundation screen device name to prevent picking up USB cameras (e.g. Osmo Pocket, webcams)
+                    screen_dev = str(self.screen_index)
                     if isinstance(self.screen_index, int) or str(self.screen_index).isdigit():
                         screen_dev = f"Capture screen {self.screen_index}"
                     else:
                         screen_dev = str(self.screen_index)
 
-                prof = self.profiles.get(self.profile, self.profiles["full"])
-                cmd = [
-                    "ffmpeg",
-                    "-f", "avfoundation",
-                    "-r", str(prof.get("fps", self.fps)),
-                    "-capture_cursor", "1",
-                    "-i", screen_dev,
-                ]
-                if prof.get("width"):
-                    # filter fps ngunci frame rate keluar (avfoundation -r cuma petunjuk, bisa bablas)
-                    cmd += ["-vf", f"fps={int(prof.get('fps', self.fps))},scale={int(prof['width'])}:-2:flags=fast_bilinear"]
-                cmd += [
-                    "-f", "mjpeg",
-                    "-q:v", str(prof.get("q", self.ffmpeg_q)),
-                    "-flush_packets", "1",
-                    "-an",
-                    "pipe:1"
-                ]
+                    cmd = [
+                        "ffmpeg",
+                        "-f", "avfoundation",
+                        "-r", fps_val,
+                        "-capture_cursor", "1",
+                        "-i", screen_dev,
+                    ]
+                    if prof.get("width"):
+                        # filter fps ngunci frame rate keluar (avfoundation -r cuma petunjuk, bisa bablas)
+                        cmd += ["-vf", f"fps={int(prof.get('fps', self.fps))},scale={int(prof['width'])}:-2:flags=fast_bilinear"]
+                    cmd += [
+                        "-f", "mjpeg",
+                        "-q:v", q_val,
+                        "-flush_packets", "1",
+                        "-an",
+                        "pipe:1"
+                    ]
+                elif sys.platform == "linux":
+                    if shutil.which("wf-recorder"):
+                        # Wayland / wlroots native capture via wf-recorder
+                        cmd = [
+                            "wf-recorder",
+                            "-y",
+                            "-D",
+                            "-r", fps_val,
+                            "-m", "mjpeg",
+                            "-c", "mjpeg",
+                        ]
+                        if prof.get("width"):
+                            cmd += ["-F", f"scale={int(prof['width'])}:-2"]
+                        cmd += ["-f", "/dev/stdout"]
+                    else:
+                        # Fallback to ffmpeg with x11grab or kmsgrab
+                        display_str = os.environ.get("DISPLAY")
+                        if not display_str and os.environ.get("WAYLAND_DISPLAY"):
+                            cmd = [
+                                "ffmpeg",
+                                "-f", "kmsgrab",
+                                "-framerate", fps_val,
+                                "-i", "-",
+                            ]
+                        else:
+                            cmd = [
+                                "ffmpeg",
+                                "-f", "x11grab",
+                                "-framerate", fps_val,
+                                "-draw_mouse", "1",
+                                "-i", display_str or ":0.0",
+                            ]
+                        if prof.get("width"):
+                            cmd += ["-vf", f"fps={int(prof.get('fps', self.fps))},scale={int(prof['width'])}:-2:flags=fast_bilinear"]
+                        cmd += [
+                            "-f", "mjpeg",
+                            "-q:v", q_val,
+                            "-flush_packets", "1",
+                            "-an",
+                            "pipe:1"
+                        ]
+                else:
+                    logger.error(f"Unsupported capture platform: {sys.platform}")
+                    await asyncio.sleep(2)
+                    continue
 
                 logger.info(f"Launching capture worker: {' '.join(cmd)}")
                 self._proc = await asyncio.create_subprocess_exec(

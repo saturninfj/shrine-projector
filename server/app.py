@@ -4,6 +4,7 @@ FastAPI + WebSockets + Native Hardware Video Streaming + Subnet Firewall + Strea
 """
 
 import os
+import sys
 import json
 import asyncio
 import logging
@@ -210,19 +211,22 @@ async def get_status(token: Optional[str] = Query(None)):
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token")
 
     ax_trusted = False
-    try:
-        import ctypes
-        app_services = ctypes.cdll.LoadLibrary('/System/Library/Frameworks/ApplicationServices.framework/ApplicationServices')
-        app_services.AXIsProcessTrusted.argtypes = []
-        app_services.AXIsProcessTrusted.restype = ctypes.c_bool
-        ax_trusted = bool(app_services.AXIsProcessTrusted())
-    except Exception as e:
-        logger.warning(f"AX check failed: {e}")
+    if sys.platform == "darwin":
+        try:
+            import ctypes
+            app_services = ctypes.cdll.LoadLibrary('/System/Library/Frameworks/ApplicationServices.framework/ApplicationServices')
+            app_services.AXIsProcessTrusted.argtypes = []
+            app_services.AXIsProcessTrusted.restype = ctypes.c_bool
+            ax_trusted = bool(app_services.AXIsProcessTrusted())
+        except Exception as e:
+            logger.warning(f"AX check failed: {e}")
+    else:
+        ax_trusted = True
 
     return {
         "status": "online",
         "service": "ShrineProjector",
-        "host_label": CONFIG.get("server", {}).get("host_label", "This Mac"),
+        "host_label": CONFIG.get("server", {}).get("host_label", "This Mac" if sys.platform == "darwin" else "This Linux Host"),
         "stream_active": capture_engine.is_active,
         "manual_off": is_manual_off(),
         "profile": capture_engine.profile,

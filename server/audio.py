@@ -1,15 +1,15 @@
 """
 ShrineProjector Audio Subsystem
 Ultra-Low Latency System Audio Broadcast Engine
-Captures system audio via BlackHole 2ch loopback driver as native 44.1kHz 16-bit stereo PCM.
-Capture utama lewat PortAudio (sounddevice): ring buffer CoreAudio, gak ngedrop paket.
-ffmpeg avfoundation cuma cadangan — dia cuma nyimpen 1 buffer audio, jadi ngedrop ~3-4%
-paket kalau Mac sibuk (terukur 18 Nov: 0,96x realtime vs PortAudio 1,002x).
+Captures system audio via BlackHole 2ch (macOS) or PulseAudio/PipeWire monitor (Linux)
+Capture utama lewat PortAudio (sounddevice): ring buffer low-latency.
+ffmpeg avfoundation / pulse cuma cadangan.
 Streams directly to Web Audio API clients over WebSocket for sub-40ms latency.
-Zero-CPU Idle: Automatically terminates FFmpeg process when 0 viewers are listening.
+Zero-CPU Idle: Automatically terminates capture process when 0 viewers are listening.
 """
 
 import os
+import sys
 import shutil
 import asyncio
 import logging
@@ -32,7 +32,9 @@ class AudioEngine:
         self._switch_audio_cmd = shutil.which("SwitchAudioSource") or "/opt/homebrew/bin/SwitchAudioSource"
 
     def ensure_multi_output(self):
-        """Ensure audio output is routed to Multi-Output Device so BlackHole captures sound"""
+        """Ensure audio output is routed to Multi-Output Device so BlackHole captures sound (macOS only)"""
+        if sys.platform != "darwin":
+            return
         if self._switch_audio_cmd and os.path.exists(self._switch_audio_cmd):
             try:
                 curr = subprocess.check_output([self._switch_audio_cmd, "-c"], text=True).strip()
@@ -58,19 +60,48 @@ class AudioEngine:
                 pass
 
     def _start_portaudio(self) -> bool:
-        """Capture BlackHole lewat PortAudio. Callback jalan di thread audio CoreAudio."""
+        """Capture BlackHole (macOS) atau Pulse/PipeWire monitor (Linux) lewat PortAudio."""
         try:
             import sounddevice as sd
         except Exception as e:
-            logger.warning(f"[AUDIO] sounddevice gak ada ({e}), pakai ffmpeg")
+            logger.warning(f"[AUDIO] sounddevice gak ada ({e}), pakai fallback")
             return False
-        try:
-            dev = next(
-                i for i, d in enumerate(sd.query_devices())
-                if "BlackHole 2ch" in d["name"] and d["max_input_channels"] >= self.channels
-            )
-        except StopIteration:
-            logger.warning("[AUDIO] Device BlackHole 2ch gak ketemu di PortAudio, pakai ffmpeg")
+
+        dev = None
+        if sys.platform == "darwin":
+            try:
+                dev = next(
+                    i for i, d in enumerate(sd.query_devices())
+                    if "BlackHole 2ch" in d["name"] and d["max_input_channels"] >= self.channels
+                )
+            except StopIteration:
+                logger.warning("[AUDIO] Device BlackHole 2ch gak ketemu di PortAudio, pakai ffmpeg")
+                return False
+        elif sys.platform == "linux":
+            try:
+                devices = sd.query_devices()
+                # 1. Search for monitor or pulse/pipewire device
+                for i, d in enumerate(devices):
+                    if d.get("max_input_channels", 0) >= self.channels:
+                        name_lower = d.get("name", "").lower()
+                        if "monitor" in name_lower or "pulse" in name_lower or "pipewire" in name_lower:
+                            dev = i
+                            break
+                # 2. Fallback to default input device
+                if dev is None:
+                    default_dev = sd.default.device
+                    if isinstance(default_dev, (list, tuple)) and default_dev[0] is not None and default_dev[0] >= 0:
+                        dev = default_dev[0]
+                    elif isinstance(default_dev, int) and default_dev >= 0:
+                        dev = default_dev
+            except Exception as e:
+                logger.warning(f"[AUDIO] Error querying audio devices on Linux: {e}")
+                return False
+
+            if dev is None:
+                logger.warning("[AUDIO] No suitable audio input device found on Linux via sounddevice")
+                return False
+        else:
             return False
 
         loop = self._loop
@@ -87,15 +118,15 @@ class AudioEngine:
                 dtype="int16", blocksize=1764, latency="high", callback=_cb,
             )
             self._sd_stream.start()
-            logger.info(f"[AUDIO] PortAudio capture aktif di BlackHole 2ch ({self.sample_rate}Hz stereo)")
+            logger.info(f"[AUDIO] PortAudio capture aktif di device {dev} ({self.sample_rate}Hz stereo)")
             return True
         except Exception as e:
-            logger.warning(f"[AUDIO] PortAudio gagal start ({e}), pakai ffmpeg")
+            logger.warning(f"[AUDIO] PortAudio gagal start ({e}), pakai fallback")
             self._sd_stream = None
             return False
 
     async def _start_capture(self):
-        """Mulai capture: PortAudio dulu, ffmpeg avfoundation kalau PortAudio gagal"""
+        """Mulai capture: PortAudio dulu, ffmpeg avfoundation (macOS) / pulse (Linux) kalau PortAudio gagal"""
         if self._process is not None or self._sd_stream is not None:
             return
 
@@ -103,21 +134,40 @@ class AudioEngine:
         self._loop = asyncio.get_running_loop()
         if self._start_portaudio():
             return
-        logger.info(f"[AUDIO] Spawning FFmpeg raw PCM audio capture on BlackHole 2ch ({self.sample_rate}Hz stereo)...")
 
-        cmd = [
-            "ffmpeg",
-            "-nostdin",
-            "-hide_banner",
-            "-loglevel", "error",
-            "-f", "avfoundation",
-            "-i", ":BlackHole 2ch",
-            "-f", "s16le",
-            "-ar", str(self.sample_rate),
-            "-ac", str(self.channels),
-            "-flush_packets", "1",
-            "pipe:1"
-        ]
+        if sys.platform == "darwin":
+            logger.info(f"[AUDIO] Spawning FFmpeg raw PCM audio capture on BlackHole 2ch ({self.sample_rate}Hz stereo)...")
+            cmd = [
+                "ffmpeg",
+                "-nostdin",
+                "-hide_banner",
+                "-loglevel", "error",
+                "-f", "avfoundation",
+                "-i", ":BlackHole 2ch",
+                "-f", "s16le",
+                "-ar", str(self.sample_rate),
+                "-ac", str(self.channels),
+                "-flush_packets", "1",
+                "pipe:1"
+            ]
+        elif sys.platform == "linux":
+            logger.info(f"[AUDIO] Spawning FFmpeg raw PCM audio capture on Linux pulse/default ({self.sample_rate}Hz stereo)...")
+            cmd = [
+                "ffmpeg",
+                "-nostdin",
+                "-hide_banner",
+                "-loglevel", "error",
+                "-f", "pulse",
+                "-i", "default",
+                "-f", "s16le",
+                "-ar", str(self.sample_rate),
+                "-ac", str(self.channels),
+                "-flush_packets", "1",
+                "pipe:1"
+            ]
+        else:
+            logger.warning(f"[AUDIO] Unsupported audio platform: {sys.platform}, running in silent mode")
+            return
 
         try:
             self._process = await asyncio.create_subprocess_exec(
@@ -128,12 +178,12 @@ class AudioEngine:
             self._reader_task = asyncio.create_task(self._reader_loop())
             logger.info(f"[AUDIO] FFmpeg raw PCM capture active (PID: {self._process.pid})")
         except Exception as e:
-            logger.error(f"[AUDIO] Failed to start FFmpeg audio process: {e}")
+            logger.warning(f"[AUDIO] Failed to start FFmpeg audio process ({e}). Running in silent mode.")
             self._process = None
 
     async def _stop_capture(self):
         """Stops the FFmpeg capture process to return to 0% CPU idle without deadlocks"""
-        logger.info("[AUDIO] 0 listeners active. Stopping FFmpeg audio capture...")
+        logger.info("[AUDIO] 0 listeners active. Stopping audio capture...")
         if self._sd_stream is not None:
             stream, self._sd_stream = self._sd_stream, None
             try:

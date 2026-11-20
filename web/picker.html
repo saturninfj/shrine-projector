@@ -184,9 +184,10 @@
       for (const t of targets) {
         const [cls, text] = stateOf(t);
         const busy = pending === t.name && !t.ready;
+        const icon = t.name.includes('pi') ? '🍓' : '🐧';
         html += `
         <div class="device">
-          <div class="icon">🐧</div>
+          <div class="icon">${icon}</div>
           <div class="info"><div class="name">${esc(t.label)}</div>
             <div class="state"><span class="dot ${cls}"></span>${esc(text)}</div></div>
           <div class="actions">
