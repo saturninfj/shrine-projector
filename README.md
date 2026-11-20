@@ -68,6 +68,8 @@ tailscale serve --bg --https=8766 http://127.0.0.1:8765
 
 Then open `https://<your-machine>.<tailnet>.ts.net:8766/` on the client and paste the admin or viewer token when asked. The browser remembers the token after the server accepts it.
 
+**Login by Tailscale identity (optional).** `tailscale serve` adds a `Tailscale-User-Login` header that tailnet clients cannot forge. List your login(s) in `security.trusted_tailscale_logins` and requests that arrive through `tailscale serve` with that identity are treated as the first control token, so your own devices need no token at all. The header is only honoured when the TCP peer is loopback (the serve proxy); the daemon runs uvicorn with `proxy_headers=False` so a direct request from another tailnet or LAN address can never pass as loopback. Any local process on the host could still forge it, which is the accepted trust boundary.
+
 To run at login, render `scripts/shrine-projector.plist.template` (instructions inside the file). Rotate tokens any time with `python3 scripts/init-config --rotate` and restart the daemon.
 
 `scripts/projector` is a small CLI: `status`, `on`, `off`, `toggle`, `url`, `open`.

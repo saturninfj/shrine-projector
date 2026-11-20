@@ -57,6 +57,7 @@ uvicorn.run(
     port=$PORT,
     log_level='info',
     ws_ping_interval=None,
-    ws_ping_timeout=None
+    ws_ping_timeout=None,
+    proxy_headers=False  # peer asli (127.0.0.1 = lewat tailscale serve); wajib buat login identitas Tailscale
 )
 "

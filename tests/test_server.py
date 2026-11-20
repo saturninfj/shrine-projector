@@ -155,3 +155,30 @@ class TestRemoteTargets(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestTailscaleIdentity(unittest.TestCase):
+    def _run(self, client_ip, login, qs=b""):
+        import asyncio
+        from server.tsidentity import TailscaleIdentityMiddleware
+        seen = {}
+
+        async def app(scope, receive, send):
+            seen["qs"] = scope.get("query_string", b"")
+
+        mw = TailscaleIdentityMiddleware(app, ["owner@github"], "CTRL-TOKEN")
+        headers = [(b"tailscale-user-login", login.encode())] if login else []
+        scope = {"type": "http", "client": (client_ip, 1234), "headers": headers, "query_string": qs}
+        asyncio.run(mw(scope, None, None))
+        return seen["qs"].decode()
+
+    def test_trusted_login_via_loopback_gets_token(self):
+        self.assertIn("token=CTRL-TOKEN", self._run("127.0.0.1", "Owner@GitHub", b"token=null"))
+
+    def test_untrusted_login_ignored(self):
+        self.assertEqual(self._run("127.0.0.1", "someone@gmail.com", b"token=x"), "token=x")
+
+    def test_header_from_non_loopback_never_trusted(self):
+        # LAN/IP Tailscale langsung ke port daemon: header bisa dipalsuin -> diabaikan
+        self.assertEqual(self._run("192.168.18.50", "owner@github", b""), "")
+        self.assertEqual(self._run("100.81.125.55", "owner@github", b""), "")

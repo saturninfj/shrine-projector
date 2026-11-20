@@ -932,16 +932,14 @@
     }
 
     async function init() {
-      if (!token) {
-        authModal.style.display = 'flex';
-        return;
-      }
+      // Tanpa token tetap tanya server dulu: lewat `tailscale serve` dengan login Tailscale yang
+      // dipercaya, server ngizinin tanpa token. Kalau ditolak (401) baru modal token muncul.
       try {
         const res = await fetch(`/api/status?token=${encodeURIComponent(token)}`);
         if (res.ok) {
           const data = await res.json();
           canControl = !!data.can_control;
-          try { localStorage.setItem('shrine_projector_token', token); } catch (e) {}
+          if (token) { try { localStorage.setItem('shrine_projector_token', token); } catch (e) {} }
           if (canControl) setupRemote();
           if (data.display) {
             hostWidth = data.display.width || hostWidth;

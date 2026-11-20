@@ -139,13 +139,13 @@
     }
 
     async function boot() {
-      if (!token) return showAuth();
+      // Tanpa token tetap coba: login Tailscale yang dipercaya diizinin server tanpa token.
       try {
         const st = await api('/api/status');
-        try { localStorage.setItem(TOKEN_KEY, token); } catch (e) {}
+        if (token) { try { localStorage.setItem(TOKEN_KEY, token); } catch (e) {} }
         // Token SENGAJA ditaruh di URL: shortcut "Add to Home Screen" di iOS punya storage
         // sendiri, jadi URL yang disimpan harus bawa token biar gak minta token lagi.
-        keepTokenInUrl();
+        if (token) keepTokenInUrl();
         hostLabel = st.host_label || hostLabel;
         if (st.can_control) {
           try { targets = (await api('/api/remote')).targets || []; } catch (e) { targets = []; }
@@ -157,7 +157,7 @@
       } catch (e) {
         if (e.status === 401) {
           // token di URL basi tapi ada token tersimpan yang beda: coba yang tersimpan
-          if (stored && token !== stored) { token = stored; stripTokenFromUrl(); return boot(); }
+          if (stored && token && token !== stored) { token = stored; stripTokenFromUrl(); return boot(); }
           try { localStorage.removeItem(TOKEN_KEY); } catch (_) {}
           stripTokenFromUrl();
           token = null;
