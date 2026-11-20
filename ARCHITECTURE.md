@@ -1,5 +1,7 @@
 # ShrineProjector architecture
 
+Privacy-first, capability-gated remote desktop and screen projection architecture for macOS, Windows, and Linux hosts.
+
 This describes the code as it is, not a roadmap. See the README for the disclaimer about RustDesk (design inspiration only, no shared code).
 
 ## Components

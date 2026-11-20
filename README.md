@@ -1,8 +1,10 @@
 # ShrineProjector
 
-A small, self-hosted screen viewer and remote control for a Mac, meant to be used only inside your own private network (Tailscale or LAN). The client is a plain web page, so an iPhone, iPad or another laptop can view and control the Mac without installing anything.
+> **Privacy-first, self-hosted screen projector and remote control for macOS, Windows, and Linux.**
 
-It is a personal project built for one household's setup, shared in case it is useful to others who want a remote desktop with as little exposure as possible. It is not a drop-in replacement for a full remote desktop product.
+A small, lightweight, privacy-respecting screen viewer and remote control daemon built strictly for your own private network (Tailscale or LAN). The client is a zero-install plain web page: an iPhone, iPad, tablet, or another computer can securely view and control your desktop through any modern browser without third-party cloud relays, telemetry, tracking, or foreign agent binaries.
+
+It is a personal project built for high privacy and zero-trust personal setups, shared in case it is useful to others who want remote desktop access with as little exposure as possible. It is not a bloated drop-in replacement for a commercial SaaS remote desktop product.
 
 > **Disclaimer: this project is a teardown-inspired rebuild, not a fork.**
 > The design started from a teardown (architecture and threat review) of [RustDesk](https://github.com/rustdesk/rustdesk). ShrineProjector contains **no RustDesk source code**: it is an independent Python/JavaScript implementation and is **not affiliated with, endorsed by, or derived from the code of** the RustDesk project. RustDesk is licensed under AGPL-3.0; this repository is MIT and shares no code with it. The notes below describe the trade-offs that motivated a narrower tool. They are not a claim that RustDesk is unsafe for its intended use: RustDesk solves a much harder problem (connecting arbitrary machines across the public internet) and many of its design choices follow from that.
@@ -40,10 +42,10 @@ Being precise here matters more than sounding impressive.
 
 Known limitations, stated plainly:
 
-- Tokens do not expire and are not tied to a device identity; anyone holding the admin token who can reach the port can control the Mac. Treat it like an SSH key.
+- Tokens do not expire and are not tied to a device identity; anyone holding the admin token who can reach the port can control the host machine. Treat it like an SSH key.
 - There is no in-app TLS. Use `tailscale serve` (or another reverse proxy) for HTTPS; plain HTTP on a LAN exposes the token to anyone sniffing that LAN.
 - The token is passed as a URL query parameter for convenience, so it can end up in browser history.
-- It relies on native code you should trust separately: `ffmpeg`, PortAudio, macOS frameworks.
+- It relies on native code you should trust separately: `ffmpeg`, PortAudio, OS native frameworks.
 - Code comments are partly in Indonesian.
 
 ## Setup (macOS)
@@ -113,7 +115,7 @@ To run at login, render `scripts/shrine-projector.plist.template` (instructions 
 
 ## Remote targets (other machines)
 
-ShrineProjector only captures the Mac it runs on. To reach another machine (for example a Linux box running GNOME's built-in RDP server behind [Apache Guacamole](https://guacamole.apache.org/)), you can register a *remote target*. Once at least one target exists, `/` becomes a device picker (this Mac, named by `server.host_label`, plus each target) and the Mac stream moves to `/mac`; a **Device** button in the stream HUD leads back. Picking a target starts it, waits until it is ready, then opens its `url`. View-only tokens only see the Mac.
+ShrineProjector captures the machine it runs on. To reach another machine in your network, you can register a *remote target*. Once at least one target exists, `/` becomes a device picker (this host, named by `server.host_label`, plus each target) and the primary host stream moves to `/mac`; a **Device** button in the stream HUD leads back. Picking a target starts it, waits until it is ready, then opens its `url`. View-only tokens only see the primary host.
 
 ```json
 "remote_targets": {

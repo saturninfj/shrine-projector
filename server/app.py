@@ -1,5 +1,6 @@
 """
 ShrineProjector Main Daemon Server
+Privacy-first, self-hosted remote desktop & screen projector for macOS, Windows, and Linux.
 FastAPI + WebSockets + Native Hardware Video Streaming + Subnet Firewall + Stream Power Gate
 """
 
@@ -183,7 +184,11 @@ async def lifespan(app: FastAPI):
 _control_token = next((t["token"] for t in CONFIG.get("security", {}).get("auth_tokens", [])
                        if t.get("can_control")), None)
 
-app = FastAPI(title="ShrineProjector", lifespan=lifespan)
+app = FastAPI(
+    title="ShrineProjector",
+    description="Privacy-first, self-hosted remote desktop & screen projector for macOS, Windows, and Linux",
+    lifespan=lifespan,
+)
 app.add_middleware(SubnetFirewallMiddleware)
 app.add_middleware(TailscaleIdentityMiddleware,
                    trusted_logins=CONFIG.get("security", {}).get("trusted_tailscale_logins", []),
