@@ -29,10 +29,10 @@ Being precise here matters more than sounding impressive.
 
 | Area | Current behaviour |
 |---|---|
-| Platform | macOS (Apple Silicon / Intel) and Linux (Ubuntu, Debian, Fedora, Raspberry Pi OS; Wayland wlroots & X11). |
-| Video | Hardware-accelerated screen capture → MJPEG frames over WebSocket.<br/>• macOS: `ffmpeg` via `avfoundation`<br/>• Linux: `wf-recorder` (Wayland/wlroots) or `ffmpeg` (`x11grab`/`kmsgrab`).<br/>Two profiles: `full` (native res, ~30 fps) and `kafe` (1280 px, 12 fps, for slow networks). |
-| Audio | System audio PCM over WebSocket.<br/>• macOS: via [BlackHole](https://github.com/ExistentialAudio/BlackHole) loopback driver with PortAudio (`sounddevice`).<br/>• Linux: via PulseAudio/PipeWire monitor source. |
-| Input | Mouse, scroll, keyboard and paste injected natively:<br/>• macOS: CoreGraphics via `ctypes`<br/>• Linux: kernel `/dev/uinput` via `python-evdev` (virtual absolute tablet/mouse + keyboard).<br/>Rate-limited (default 120 events/s), coordinates clamped to the screen. |
+| Platform | macOS (Apple Silicon / Intel), Linux (Ubuntu, Debian, Fedora, Raspberry Pi OS; Wayland wlroots & X11), and Windows (Windows 10/11). |
+| Video | Hardware-accelerated screen capture → MJPEG frames over WebSocket.<br/>• macOS: `ffmpeg` via `avfoundation`<br/>• Linux: `wf-recorder` (Wayland/wlroots) or `ffmpeg` (`x11grab`/`kmsgrab`).<br/>• Windows: `ffmpeg` via `gdigrab`.<br/>Two profiles: `full` (native res, ~30 fps) and `kafe` (1280 px, 12 fps, for slow networks). |
+| Audio | System audio PCM over WebSocket.<br/>• macOS: via [BlackHole](https://github.com/ExistentialAudio/BlackHole) loopback driver with PortAudio (`sounddevice`).<br/>• Linux: via PulseAudio/PipeWire monitor source.<br/>• Windows: via WASAPI / Stereo Mix loopback. |
+| Input | Mouse, scroll, keyboard and paste injected natively:<br/>• macOS: CoreGraphics via `ctypes`<br/>• Linux: kernel `/dev/uinput` via `python-evdev` (virtual absolute tablet/mouse + keyboard).<br/>• Windows: Win32 `SendInput` & `SetCursorPos` via `ctypes` (zero external dependencies).<br/>Rate-limited (default 120 events/s), coordinates clamped to the screen. |
 | Auth | Static bearer tokens from a local config file, compared in constant time. Each token is either `admin` (view + control) or `viewer` (view only; input is dropped server-side). The daemon refuses to start with placeholder or short tokens. |
 | Network gate | Source-IP allow-list (default: loopback + Tailscale CGNAT range). Bind address is configurable; default is `127.0.0.1`, intended to sit behind `tailscale serve` for HTTPS. |
 | Clipboard | Plain UTF-8 text only, null bytes stripped, length-capped (default 64 KiB). Host → client clipboard sync does not exist. |
@@ -82,6 +82,19 @@ cd shrine-projector
 python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
 python3 scripts/init-config
 ./scripts/run.sh
+```
+
+## Setup (Windows 10 / 11)
+
+Requirements: Python 3.11+, and `ffmpeg` (install via winget: `winget install Gyan.FFmpeg`).
+
+```cmd
+git clone https://github.com/saturninfj/shrine-projector.git
+cd shrine-projector
+python -m venv .venv
+.venv\Scripts\pip install -r requirements.txt
+python scripts\init-config
+scripts\run.bat
 ```
 
 Expose it to your tailnet over HTTPS, without opening a LAN port:

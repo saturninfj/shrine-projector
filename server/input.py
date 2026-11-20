@@ -170,12 +170,35 @@ def get_linux_screen_resolution() -> Tuple[int, int]:
     return 1920, 1080
 
 
+def get_windows_screen_resolution() -> Tuple[int, int]:
+    """Query current native Windows display resolution using user32.GetSystemMetrics."""
+    if sys.platform == "win32":
+        try:
+            import ctypes
+            try:
+                ctypes.windll.shcore.SetProcessDpiAwareness(2)
+            except Exception:
+                try:
+                    ctypes.windll.user32.SetProcessDPIAware()
+                except Exception:
+                    pass
+            w = int(ctypes.windll.user32.GetSystemMetrics(0))
+            h = int(ctypes.windll.user32.GetSystemMetrics(1))
+            if w > 0 and h > 0:
+                return w, h
+        except Exception as ex:
+            logger.warning(f"Failed to query Windows display resolution: {ex}")
+    return 1920, 1080
+
+
 def get_screen_resolution() -> Tuple[int, int]:
     """Query screen resolution dynamically for current host platform."""
     if sys.platform == "darwin":
         return get_macos_screen_resolution()
     elif sys.platform == "linux":
         return get_linux_screen_resolution()
+    elif sys.platform == "win32":
+        return get_windows_screen_resolution()
     return 1920, 1080
 
 
@@ -707,6 +730,336 @@ class LinuxUInputBackend:
             self._kbd_ui.syn()
 
 
+# ── Windows SendInput & Win32 ctypes definitions ──
+
+import ctypes
+from ctypes import c_uint32, c_int32, c_uint16, c_ulonglong, c_void_p, Structure, Union
+
+# Win32 Input constants
+INPUT_MOUSE = 0
+INPUT_KEYBOARD = 1
+INPUT_HARDWARE = 2
+
+MOUSEEVENTF_MOVE = 0x0001
+MOUSEEVENTF_LEFTDOWN = 0x0002
+MOUSEEVENTF_LEFTUP = 0x0004
+MOUSEEVENTF_RIGHTDOWN = 0x0008
+MOUSEEVENTF_RIGHTUP = 0x0010
+MOUSEEVENTF_MIDDLEDOWN = 0x0020
+MOUSEEVENTF_MIDDLEUP = 0x0040
+MOUSEEVENTF_WHEEL = 0x0800
+MOUSEEVENTF_ABSOLUTE = 0x8000
+
+KEYEVENTF_EXTENDEDKEY = 0x0001
+KEYEVENTF_KEYUP = 0x0002
+KEYEVENTF_UNICODE = 0x0004
+KEYEVENTF_SCANCODE = 0x0008
+
+
+class MOUSEINPUT(Structure):
+    _fields_ = [
+        ("dx", c_int32),
+        ("dy", c_int32),
+        ("mouseData", c_uint32),
+        ("dwFlags", c_uint32),
+        ("time", c_uint32),
+        ("dwExtraInfo", c_ulonglong if ctypes.sizeof(c_void_p) == 8 else c_uint32),
+    ]
+
+
+class KEYBDINPUT(Structure):
+    _fields_ = [
+        ("wVk", c_uint16),
+        ("wScan", c_uint16),
+        ("dwFlags", c_uint32),
+        ("time", c_uint32),
+        ("dwExtraInfo", c_ulonglong if ctypes.sizeof(c_void_p) == 8 else c_uint32),
+    ]
+
+
+class HARDWAREINPUT(Structure):
+    _fields_ = [
+        ("uMsg", c_uint32),
+        ("wParamL", c_uint16),
+        ("wParamH", c_uint16),
+    ]
+
+
+class _INPUTUNION(Union):
+    _fields_ = [
+        ("mi", MOUSEINPUT),
+        ("ki", KEYBDINPUT),
+        ("hi", HARDWAREINPUT),
+    ]
+
+
+class INPUT(Structure):
+    _fields_ = [
+        ("type", c_uint32),
+        ("union", _INPUTUNION),
+    ]
+
+
+# Mapping from standard Web KeyboardEvent keys to Windows Virtual Key (VK) codes
+WEB_TO_WIN_VK_MAP = {
+    # Letters
+    **{chr(c): ord(chr(c).upper()) for c in range(ord('a'), ord('z') + 1)},
+    **{chr(c): ord(chr(c)) for c in range(ord('A'), ord('Z') + 1)},
+    # Digits
+    **{str(d): ord(str(d)) for d in range(10)},
+    # Control / navigation
+    "Enter": 0x0D,       # VK_RETURN
+    "Return": 0x0D,
+    "Tab": 0x09,         # VK_TAB
+    "Space": 0x20,       # VK_SPACE
+    " ": 0x20,
+    "Backspace": 0x08,   # VK_BACK
+    "Escape": 0x1B,      # VK_ESCAPE
+    "Esc": 0x1B,
+    "Delete": 0x2E,      # VK_DELETE
+    "Insert": 0x2D,      # VK_INSERT
+    "Home": 0x24,        # VK_HOME
+    "End": 0x23,         # VK_END
+    "PageUp": 0x21,      # VK_PRIOR
+    "PageDown": 0x22,    # VK_NEXT
+    "ArrowLeft": 0x25,   # VK_LEFT
+    "ArrowUp": 0x26,     # VK_UP
+    "ArrowRight": 0x27,  # VK_RIGHT
+    "ArrowDown": 0x28,   # VK_DOWN
+    "CapsLock": 0x14,    # VK_CAPITAL
+    # Modifiers
+    "Shift": 0x10,       # VK_SHIFT
+    "ShiftLeft": 0xA0,   # VK_LSHIFT
+    "ShiftRight": 0xA1,  # VK_RSHIFT
+    "Control": 0x11,     # VK_CONTROL
+    "Ctrl": 0x11,
+    "ControlLeft": 0xA2, # VK_LCONTROL
+    "ControlRight": 0xA3,# VK_RCONTROL
+    "Alt": 0x12,         # VK_MENU
+    "Option": 0x12,
+    "AltLeft": 0xA4,     # VK_LMENU
+    "AltRight": 0xA5,    # VK_RMENU
+    "Meta": 0x5B,        # VK_LWIN
+    "Command": 0x5B,
+    "Cmd": 0x5B,
+    "MetaLeft": 0x5B,    # VK_LWIN
+    "MetaRight": 0x5C,   # VK_RWIN
+    "Win": 0x5B,
+    # Function keys F1 - F12
+    **{f"F{i}": 0x6F + i for i in range(1, 13)},
+    # Symbols & punctuation
+    ";": 0xBA, ":": 0xBA,
+    "=": 0xBB, "+": 0xBB,
+    ",": 0xBC, "<": 0xBC,
+    "-": 0xBD, "_": 0xBD,
+    ".": 0xBE, ">": 0xBE,
+    "/": 0xBF, "?": 0xBF,
+    "`": 0xC0, "~": 0xC0,
+    "[": 0xDB, "{": 0xDB,
+    "\\": 0xDC, "|": 0xDC,
+    "]": 0xDD, "}": 0xDD,
+    "'": 0xDE, '"': 0xDE,
+}
+
+
+class WindowsInputBackend:
+    """
+    Windows native synthetic input backend using Win32 SendInput & SetCursorPos via ctypes.
+    Requires no third-party libraries (pure Python standard library ctypes).
+    """
+
+    def __init__(self, screen_size: Tuple[int, int] = (1920, 1080)):
+        self.screen_width, self.screen_height = screen_size
+        self._active_modifiers: Set[int] = set()
+        self.available = sys.platform == "win32"
+        if self.available:
+            try:
+                try:
+                    ctypes.windll.shcore.SetProcessDpiAwareness(2)
+                except Exception:
+                    try:
+                        ctypes.windll.user32.SetProcessDPIAware()
+                    except Exception:
+                        pass
+            except Exception as ex:
+                logger.warning(f"Windows DPI awareness setup warning: {ex}")
+
+    def update_screen_size(self, width: int, height: int):
+        self.screen_width = width
+        self.screen_height = height
+
+    def _send_inputs(self, input_list: List[INPUT]):
+        if not self.available or not input_list:
+            return
+        try:
+            n = len(input_list)
+            arr = (INPUT * n)(*input_list)
+            ctypes.windll.user32.SendInput(n, arr, ctypes.sizeof(INPUT))
+        except Exception as ex:
+            logger.warning(f"SendInput failed: {ex}")
+
+    def mouse_move(self, x: float, y: float, is_drag: bool = False):
+        if not self.available:
+            return
+        try:
+            ctypes.windll.user32.SetCursorPos(int(x), int(y))
+        except Exception as ex:
+            logger.debug(f"SetCursorPos failed: {ex}")
+
+    def mouse_click(self, x: float, y: float, button: str, action: str):
+        if not self.available:
+            return
+        self.mouse_move(x, y)
+        inputs = []
+        is_down = action in ("down", "click")
+        is_up = action in ("up", "click")
+
+        btn_map = {
+            "left": (MOUSEEVENTF_LEFTDOWN, MOUSEEVENTF_LEFTUP),
+            "right": (MOUSEEVENTF_RIGHTDOWN, MOUSEEVENTF_RIGHTUP),
+            "middle": (MOUSEEVENTF_MIDDLEDOWN, MOUSEEVENTF_MIDDLEUP),
+        }
+        down_flag, up_flag = btn_map.get(button, (MOUSEEVENTF_LEFTDOWN, MOUSEEVENTF_LEFTUP))
+
+        if is_down:
+            inp = INPUT(type=INPUT_MOUSE)
+            inp.union.mi.dwFlags = down_flag
+            inputs.append(inp)
+
+        if is_up:
+            inp = INPUT(type=INPUT_MOUSE)
+            inp.union.mi.dwFlags = up_flag
+            inputs.append(inp)
+
+        if inputs:
+            self._send_inputs(inputs)
+
+    def mouse_scroll(self, dy: float):
+        if not self.available or dy == 0:
+            return
+        # Windows WHEEL_DELTA is 120. Inverted so positive dy scrolls down.
+        wheel_amount = -int(dy * 120)
+        inp = INPUT(type=INPUT_MOUSE)
+        inp.union.mi.dwFlags = MOUSEEVENTF_WHEEL
+        inp.union.mi.mouseData = wheel_amount & 0xFFFFFFFF
+        self._send_inputs([inp])
+
+    def key_event(
+        self,
+        key: str,
+        action: str,
+        modifiers: Optional[list] = None,
+        exact_mods: bool = False,
+    ):
+        if not self.available or not key:
+            return
+
+        vk = WEB_TO_WIN_VK_MAP.get(key) or WEB_TO_WIN_VK_MAP.get(key.lower())
+        use_unicode = False
+        scan = 0
+        if vk is None:
+            if len(key) == 1:
+                use_unicode = True
+                scan = ord(key)
+                vk = 0
+            else:
+                logger.debug(f"Unmapped Windows key: {key}")
+                return
+
+        inputs = []
+        is_down = action in ("down", "press")
+        is_up = action in ("up", "press")
+
+        # Press modifiers if specified
+        if modifiers and action in ("press", "down"):
+            for m in modifiers:
+                m_vk = WEB_TO_WIN_VK_MAP.get(m)
+                if m_vk:
+                    inp = INPUT(type=INPUT_KEYBOARD)
+                    inp.union.ki.wVk = m_vk
+                    inp.union.ki.dwFlags = 0
+                    inputs.append(inp)
+                    self._active_modifiers.add(m_vk)
+
+        if is_down:
+            inp = INPUT(type=INPUT_KEYBOARD)
+            if use_unicode:
+                inp.union.ki.wScan = scan
+                inp.union.ki.dwFlags = KEYEVENTF_UNICODE
+            else:
+                inp.union.ki.wVk = vk
+                inp.union.ki.dwFlags = 0
+            inputs.append(inp)
+            if vk in (0x10, 0xA0, 0xA1, 0x11, 0xA2, 0xA3, 0x12, 0xA4, 0xA5, 0x5B, 0x5C):
+                self._active_modifiers.add(vk)
+
+        if is_up:
+            inp = INPUT(type=INPUT_KEYBOARD)
+            if use_unicode:
+                inp.union.ki.wScan = scan
+                inp.union.ki.dwFlags = KEYEVENTF_UNICODE | KEYEVENTF_KEYUP
+            else:
+                inp.union.ki.wVk = vk
+                inp.union.ki.dwFlags = KEYEVENTF_KEYUP
+            inputs.append(inp)
+            if vk in self._active_modifiers and action == "up":
+                self._active_modifiers.discard(vk)
+
+        # Release temporary modifiers if this was a single press
+        if modifiers and action in ("press", "click"):
+            for m in modifiers:
+                m_vk = WEB_TO_WIN_VK_MAP.get(m)
+                if m_vk:
+                    inp = INPUT(type=INPUT_KEYBOARD)
+                    inp.union.ki.wVk = m_vk
+                    inp.union.ki.dwFlags = KEYEVENTF_KEYUP
+                    inputs.append(inp)
+                    self._active_modifiers.discard(m_vk)
+
+        if inputs:
+            self._send_inputs(inputs)
+
+    def release_all_modifiers(self):
+        if not self.available:
+            return
+        inputs = []
+        for vk in (0x10, 0xA0, 0xA1, 0x11, 0xA2, 0xA3, 0x12, 0xA4, 0xA5, 0x5B, 0x5C):
+            inp = INPUT(type=INPUT_KEYBOARD)
+            inp.union.ki.wVk = vk
+            inp.union.ki.dwFlags = KEYEVENTF_KEYUP
+            inputs.append(inp)
+        self._send_inputs(inputs)
+        self._active_modifiers.clear()
+
+    def paste_text(self, text: str):
+        if not self.available or not text:
+            return
+        import subprocess
+        # Try clipboard copy via powershell then Ctrl+V
+        pasted = False
+        try:
+            p = subprocess.Popen(["powershell", "-NoProfile", "-Command", "Set-Clipboard -Value $input"], stdin=subprocess.PIPE)
+            p.communicate(text.encode("utf-8"), timeout=2.0)
+            time.sleep(0.05)
+            self.key_event("v", "press", modifiers=["Control"])
+            pasted = True
+        except Exception as ex:
+            logger.debug(f"PowerShell paste failed, typing characters directly: {ex}")
+
+        if not pasted:
+            # Fallback: type unicode characters directly
+            inputs = []
+            for ch in text:
+                inp_down = INPUT(type=INPUT_KEYBOARD)
+                inp_down.union.ki.wScan = ord(ch)
+                inp_down.union.ki.dwFlags = KEYEVENTF_UNICODE
+                inp_up = INPUT(type=INPUT_KEYBOARD)
+                inp_up.union.ki.wScan = ord(ch)
+                inp_up.union.ki.dwFlags = KEYEVENTF_UNICODE | KEYEVENTF_KEYUP
+                inputs.extend([inp_down, inp_up])
+            self._send_inputs(inputs)
+
+
 class DummyInputBackend:
     """Mock fallback input backend for testing or unsupported headless environments."""
 
@@ -750,6 +1103,7 @@ class InputController:
     Dispatches to:
     - MacOSInputBackend (CoreGraphics) on macOS
     - LinuxUInputBackend (evdev.UInput) on Linux
+    - WindowsInputBackend (Win32 SendInput) on Windows
     - DummyInputBackend if running headless or missing libraries
     """
 
@@ -777,6 +1131,17 @@ class InputController:
                     self.backend = None
             except Exception as ex:
                 logger.warning(f"Failed to initialize Linux evdev backend: {ex}")
+
+        elif sys.platform == "win32":
+            try:
+                win_backend = WindowsInputBackend((self.screen_width, self.screen_height))
+                if getattr(win_backend, "available", False):
+                    self.backend = win_backend
+                    logger.info("InputController initialized with Windows Win32 backend")
+                else:
+                    self.backend = None
+            except Exception as ex:
+                logger.warning(f"Failed to initialize Windows backend: {ex}")
 
         if self.backend is None:
             self.backend = DummyInputBackend((self.screen_width, self.screen_height))

@@ -226,7 +226,7 @@ async def get_status(token: Optional[str] = Query(None)):
     return {
         "status": "online",
         "service": "ShrineProjector",
-        "host_label": CONFIG.get("server", {}).get("host_label", "This Mac" if sys.platform == "darwin" else "This Linux Host"),
+        "host_label": CONFIG.get("server", {}).get("host_label", "This Mac" if sys.platform == "darwin" else ("This PC" if sys.platform == "win32" else "This Linux Host")),
         "stream_active": capture_engine.is_active,
         "manual_off": is_manual_off(),
         "profile": capture_engine.profile,

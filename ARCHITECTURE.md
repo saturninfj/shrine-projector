@@ -9,11 +9,14 @@ This describes the code as it is, not a roadmap. See the README for the disclaim
  ─────────────────────────────                        ─────────────────────────────────────────
  canvas  ◄── JPEG frames ───────── /ws/stream ──────  capture.py   macOS: ffmpeg avfoundation → MJPEG
                                                                    Linux: wf-recorder (Wayland) / ffmpeg
+                                                                   Windows: ffmpeg gdigrab → MJPEG
  WebAudio◄── PCM chunks ────────── /ws/audio  ──────  audio.py     macOS: BlackHole via PortAudio
                                                                    Linux: PulseAudio / PipeWire monitor
+                                                                   Windows: WASAPI / Stereo Mix loopback
  pointer/keyboard ── JSON events ─ /ws/stream ──────► input.py     InputGuard →
                                                                    macOS: CoreGraphics (ctypes)
                                                                    Linux: /dev/uinput (python-evdev)
+                                                                   Windows: Win32 SendInput (ctypes)
  HTTP fallback ───── /stream.mjpg, /api/input/* ────► app.py       FastAPI + uvicorn
                                                       auth.py      token table, constant-time compare
 ```
@@ -32,12 +35,12 @@ At startup the daemon refuses to run if any configured token is shorter than 32 
 
 ## Input guard
 
-`InputGuard` (server/input.py) sits between the network and the host input system (CoreGraphics on macOS, `/dev/uinput` on Linux):
+`InputGuard` (server/input.py) sits between the network and the host input system (CoreGraphics on macOS, `/dev/uinput` on Linux, Win32 `SendInput` on Windows):
 
 - rate limit (sliding one-second window, `rate_limit_events_per_sec`)
 - coordinates clamped to the detected screen size
 - keyboard: modifiers are applied per event from the client's flags, and every held key is released when the client blurs, hides or disconnects, so a dropped connection cannot leave Cmd/Ctrl stuck down
-- paste: text is reduced to plain UTF-8, null bytes removed, length capped (`max_clipboard_chars`), written with clipboard commands (`pbcopy` on macOS, `wl-copy`/`xclip` on Linux), then Cmd+V / Ctrl+V is sent
+- paste: text is reduced to plain UTF-8, null bytes removed, length capped (`max_clipboard_chars`), written with clipboard commands (`pbcopy` on macOS, `wl-copy`/`xclip` on Linux, PowerShell/SendInput on Windows), then Cmd+V / Ctrl+V is sent
 
 ## Capture lifecycle
 

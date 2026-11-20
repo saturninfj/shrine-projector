@@ -46,6 +46,15 @@ class ScreenCaptureEngine:
                     logger.info(f"ScreenCaptureEngine dynamically detected Linux resolution: {w}x{h}")
             except Exception as e:
                 logger.warning(f"Failed to auto-detect Linux resolution: {e}")
+        elif sys.platform == "win32":
+            try:
+                from .input import get_windows_screen_resolution
+                w, h = get_windows_screen_resolution()
+                if w > 0 and h > 0:
+                    self.width, self.height = w, h
+                    logger.info(f"ScreenCaptureEngine dynamically detected Windows resolution: {w}x{h}")
+            except Exception as e:
+                logger.warning(f"Failed to auto-detect Windows resolution: {e}")
 
         # Profil kualitas stream. "kafe" = hemat bandwidth buat WiFi kafe/seluler.
         # Ukuran canvas di client tetap resolusi asli (koordinat mouse gak berubah),
@@ -221,6 +230,24 @@ class ScreenCaptureEngine:
                             "-an",
                             "pipe:1"
                         ]
+                elif sys.platform == "win32":
+                    # Windows native GDI screen grab (built into all Windows ffmpeg builds)
+                    cmd = [
+                        "ffmpeg",
+                        "-f", "gdigrab",
+                        "-framerate", fps_val,
+                        "-draw_mouse", "1",
+                        "-i", "desktop",
+                    ]
+                    if prof.get("width"):
+                        cmd += ["-vf", f"fps={int(prof.get('fps', self.fps))},scale={int(prof['width'])}:-2:flags=fast_bilinear"]
+                    cmd += [
+                        "-f", "mjpeg",
+                        "-q:v", q_val,
+                        "-flush_packets", "1",
+                        "-an",
+                        "pipe:1"
+                    ]
                 else:
                     logger.error(f"Unsupported capture platform: {sys.platform}")
                     await asyncio.sleep(2)

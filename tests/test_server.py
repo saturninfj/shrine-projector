@@ -295,6 +295,74 @@ class TestMultiPlatformAdapter(unittest.TestCase):
             backend.release_all_modifiers()
             mock_kbd.syn.assert_called()
 
+    def test_windows_screen_resolution_fallback(self):
+        from server.input import get_windows_screen_resolution
+        w, h = get_windows_screen_resolution()
+        self.assertIsInstance(w, int)
+        self.assertIsInstance(h, int)
+        self.assertGreater(w, 0)
+        self.assertGreater(h, 0)
+
+    def test_windows_key_mappings(self):
+        from server.input import WEB_TO_WIN_VK_MAP
+        self.assertEqual(WEB_TO_WIN_VK_MAP["Enter"], 0x0D)
+        self.assertEqual(WEB_TO_WIN_VK_MAP["Backspace"], 0x08)
+        self.assertEqual(WEB_TO_WIN_VK_MAP["Tab"], 0x09)
+        self.assertEqual(WEB_TO_WIN_VK_MAP["Escape"], 0x1B)
+        self.assertEqual(WEB_TO_WIN_VK_MAP["Shift"], 0x10)
+        self.assertEqual(WEB_TO_WIN_VK_MAP["Control"], 0x11)
+        self.assertEqual(WEB_TO_WIN_VK_MAP["Alt"], 0x12)
+        self.assertEqual(WEB_TO_WIN_VK_MAP["Meta"], 0x5B)
+        self.assertEqual(WEB_TO_WIN_VK_MAP["ArrowUp"], 0x26)
+        self.assertEqual(WEB_TO_WIN_VK_MAP["ArrowDown"], 0x28)
+        self.assertEqual(WEB_TO_WIN_VK_MAP["a"], ord("A"))
+        self.assertEqual(WEB_TO_WIN_VK_MAP["Z"], ord("Z"))
+        self.assertEqual(WEB_TO_WIN_VK_MAP["1"], ord("1"))
+        self.assertEqual(WEB_TO_WIN_VK_MAP["F1"], 0x70)
+        self.assertEqual(WEB_TO_WIN_VK_MAP["F12"], 0x7B)
+
+    def test_windows_input_backend_mock(self):
+        from unittest.mock import MagicMock, patch
+        from server.input import WindowsInputBackend
+
+        mock_user32 = MagicMock()
+        mock_windll = MagicMock(user32=mock_user32)
+
+        with patch("sys.platform", "win32"), patch("ctypes.windll", mock_windll, create=True):
+            backend = WindowsInputBackend((1920, 1080))
+            self.assertTrue(backend.available)
+
+            backend.mouse_move(500, 400)
+            mock_user32.SetCursorPos.assert_called_with(500, 400)
+
+            backend.mouse_click(500, 400, "left", "click")
+            self.assertGreaterEqual(mock_user32.SendInput.call_count, 1)
+
+            backend.mouse_scroll(-5)
+            self.assertGreaterEqual(mock_user32.SendInput.call_count, 2)
+
+            backend.key_event("Enter", "down")
+            backend.key_event("Enter", "up")
+            self.assertGreaterEqual(mock_user32.SendInput.call_count, 4)
+
+            backend.key_event("A", "press", modifiers=["Control"])
+            backend.release_all_modifiers()
+
+            backend.paste_text("Hello Windows")
+
+    def test_audio_engine_windows_fallback_non_crash(self):
+        from server.audio import AudioEngine
+        import asyncio
+        from unittest.mock import patch
+
+        with patch("sys.platform", "win32"):
+            engine = AudioEngine()
+            engine.ensure_multi_output()
+
+            async def run_test():
+                await engine._stop_capture()
+            asyncio.run(run_test())
+
     def test_capture_engine_profiles(self):
         from server.capture import ScreenCaptureEngine
         cfg = {"display": {"width": 1920, "height": 1080, "fps": 30}}

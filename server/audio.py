@@ -29,7 +29,7 @@ class AudioEngine:
         self._lock = asyncio.Lock()
         self._sd_stream = None  # PortAudio RawInputStream (jalur utama)
         self._loop: Optional[asyncio.AbstractEventLoop] = None
-        self._switch_audio_cmd = shutil.which("SwitchAudioSource") or "/opt/homebrew/bin/SwitchAudioSource"
+        self._switch_audio_cmd = (shutil.which("SwitchAudioSource") or "/opt/homebrew/bin/SwitchAudioSource") if sys.platform == "darwin" else None
 
     def ensure_multi_output(self):
         """Ensure audio output is routed to Multi-Output Device so BlackHole captures sound (macOS only)"""
@@ -100,6 +100,28 @@ class AudioEngine:
 
             if dev is None:
                 logger.warning("[AUDIO] No suitable audio input device found on Linux via sounddevice")
+                return False
+        elif sys.platform == "win32":
+            try:
+                devices = sd.query_devices()
+                for i, d in enumerate(devices):
+                    if d.get("max_input_channels", 0) >= self.channels:
+                        name_lower = d.get("name", "").lower()
+                        if "loopback" in name_lower or "stereo mix" in name_lower or "wasapi" in name_lower:
+                            dev = i
+                            break
+                if dev is None:
+                    default_dev = sd.default.device
+                    if isinstance(default_dev, (list, tuple)) and default_dev[0] is not None and default_dev[0] >= 0:
+                        dev = default_dev[0]
+                    elif isinstance(default_dev, int) and default_dev >= 0:
+                        dev = default_dev
+            except Exception as e:
+                logger.warning(f"[AUDIO] Error querying audio devices on Windows: {e}")
+                return False
+
+            if dev is None:
+                logger.warning("[AUDIO] No suitable audio input device found on Windows via sounddevice")
                 return False
         else:
             return False
